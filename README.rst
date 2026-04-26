@@ -1,11 +1,26 @@
-MultiGeiger
+DuoGeiger
 -----------
 
-The MultiGeiger is a radioactivity measurement device.
-It has a lot of interesting properties, which you can find on the first page of the docs.
+This is a fork from [ecocurious's Multigeiger](https://github.com/ecocurious2/MultiGeiger) project.
 
-Der MultiGeiger ist ein Messgerät für Radioaktivität.
-Er hat viele interessante Eigenschaften, die man auf der ersten Seite der Doku nachlesen kann.
+The MultiGeiger is a radioactivity measurement device, based on an ESP32 microcontroller. 
+The DuoGeiger is an modified version of the original Multigeiger:
+* Removed LoRaWAN modules, Wifi/BLE radio support only
+* Added MQTT transmission
+* Added option to send messages and alerts to Telegram
+Both additional modules can be configured in the web interface.
+
+The documentation points to the original Multigeiger, but most of it is still valid for the DuoGeiger.
+
+Der MultiGeiger ist ein Messgerät für Radioaktivität auf Basis eines ESP32-Mikrocontrollers. 
+Der DuoGeiger ist eine modifizierte Version des ursprünglichen Multigeigers:
+* LoRaWAN-Module entfernt, Funkübertragung nur noch via Wifi/BLE
+* MQTT-Übertragung hinzugefügt
+* Option zum Senden von Nachrichten und Warnungen an Telegram hinzugefügt
+Beide zusätzlichen Module können in der Weboberfläche konfiguriert werden.
+
+Die Dokumentation verweist auf den ursprünglichen Multigeiger, aber die meisten Informationen sind auch für den DuoGeiger gültig.
+
 
 Documentation
 ~~~~~~~~~~~~~
@@ -22,15 +37,9 @@ Quicklinks
 ~~~~~~~~~~
 
 * Default Wifi-Password: "ESP32Geiger"
-* Multigeiger map / Karte:
-
-  https://multigeiger.citysensor.de/
+* Multigeiger map unfortunately offline / Karte leider inzwischen offline
 
 * Übersichtsseite bei Ecocurious / Ecocurious project overview page (German):
 
   https://ecocurious.de/projekte/multigeiger-2/
-
-* Online Multigeiger event room with some instruction videos (German) to discover / Online Multigeiger-Raum mit einigen Anleitungsvideos zum Entdecken:
-
-  https://play.wa.binary-kitchen.de/_/global/raw.githubusercontent.com/ecocurious2/rc3_2020/main/main.json
 
