@@ -1,0 +1,12 @@
+.pio
+.vscode
+.DS_Store
+userdefines.h
+platformio.ini
+*.mo
+*.bin
+flash
+version.h_local
+docs/build
+docs/source/_build/
+

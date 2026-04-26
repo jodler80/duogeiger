@@ -1,0 +1,24 @@
+{
+    "Header": {
+        "Comment": "All values are metric (mm)",
+        "CreationDate": "2021-04-04T18:55:52Z",
+        "GenerationSoftware": {
+            "Application": "EAGLE",
+            "Vendor": "Autodesk",
+            "Version": "9.4.2"
+        },
+        "Part": "Single"
+    },
+    "Overall": {
+        "BoardThickness": 1.57,
+        "LayerNumber": 2,
+        "Name": {
+            "ProjectId": "geiger_V1.4_1"
+        },
+        "Owner": "Reinhard Furst <rexfue@gmail.com>",
+        "Size": {
+            "X": 99.983,
+            "Y": 31.942
+        }
+    }
+}

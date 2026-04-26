@@ -1,0 +1,30 @@
+// measurements data transmission related code
+// - via WiFi to internet servers
+// - via LoRa to TTN (to internet servers)
+
+#ifndef _TRANSMISSION_H_
+#define _TRANSMISSION_H_
+
+// Sensor-PINS.
+// They are called PIN, because in the first days of Feinstaub sensor they were
+// really the CPU-Pins. Now they are 'virtual' pins to distinguish different sensors.
+// Since we send to sensor.community, we have to use their numbers.
+// PIN number 0 doesn't exist, so we use it to disable the X-PIN header.
+#define XPIN_NO_XPIN 0
+#define XPIN_RADIATION 19
+#define XPIN_BME280 11
+
+void setup_transmission(const char *version, char *ssid);
+void transmit_data_to_web(const char *tube_type, int tube_nbr, unsigned int dt, unsigned int hv_pulses, unsigned int gm_counts, unsigned int cpm,
+                   int have_thp, float temperature, float humidity, float pressure, int wifi_status);
+void transmit_data_to_telegram(const char *tube_type, int tube_nbr, float tube_factor, unsigned int cpm, unsigned int accu_cpm, float accu_rate,
+                       int have_thp, float temperature, float humidity, float pressure, int wifi_status, bool alarm_status);
+void transmit_data_to_mqtt(const char *tube_type, int tube_nbr, float tube_factor, unsigned int cpm, unsigned int accu_cpm, float accu_rate,
+                       int have_thp, float temperature, float humidity, float pressure, int wifi_status, bool alarm_status);
+
+// Periodic keep-alive functions for transmissions:
+// - On Lora boards, the Arduino LMIC wants to be polled from loop().
+// - MQTT, if active, requires a periodic keep-alive
+void poll_transmission(int wifi_status);
+
+#endif // _TRANSMISSION_H_

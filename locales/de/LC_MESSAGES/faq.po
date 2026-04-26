@@ -1,0 +1,42 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2020-2021, see AUTHORS
+# This file is distributed under the same license as the MultiGeiger package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+# 
+# Translators:
+# TW <tw@waldmann-edv.de>, 2020
+# 
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: MultiGeiger\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2021-03-14 22:24+0100\n"
+"PO-Revision-Date: 2020-05-21 22:36+0000\n"
+"Last-Translator: TW <tw@waldmann-edv.de>, 2020\n"
+"Language-Team: German (https://www.transifex.com/thomaswaldmann/teams/110212/de/)\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: de\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: ../../source/faq.rst:6 b47e1ff90cb442ec84c6d6e5e6c52312
+msgid "Frequently Asked Questions"
+msgstr "Oft gestellte Fragen (FAQ)"
+
+#: ../../source/faq.rst:9 39ef30d1ed4d469a81a079c46c1b63fb
+msgid "General"
+msgstr "Allgemein"
+
+#: ../../source/faq.rst:12 0a64320767944a0ba8f5e4d19428a67d
+msgid "Radiation doses, are there practical examples?"
+msgstr "Strahlungs-Dosis-Werte, gibt es da praktische Beispiele?"
+
+#: ../../source/faq.rst:14 d9a986ed48204fd8a110bacc2129015f
+msgid "There's a great XKCD about that, see there:"
+msgstr "Es gibt dazu ein großartiges XKCD, siehe dort:"
+
+#: ../../source/faq.rst:16 38dbcb53d42645cd9d2a7883b8882909
+msgid "https://xkcd.com/radiation/"
+msgstr "https://xkcd.com/radiation/"
