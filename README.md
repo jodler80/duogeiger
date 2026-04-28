@@ -66,7 +66,10 @@ rechts unten, mit der man Sprache und Version umschalten kann)!
 ## Quicklinks
 
 * Default Wifi-Password: "ESP32Geiger"
-* Multigeiger map unfortunately offline / Karte leider inzwischen offline
+
+* Multigeiger map / Karte:
+  
+  https://multigeiger.ecocurious.de/
 
 * Übersichtsseite bei Ecocurious / Ecocurious project overview page (German):
 
