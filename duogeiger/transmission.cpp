@@ -64,10 +64,10 @@ const char *json_format_radiation_mqtt = R"=====(
  "version": "%s",
  "tube_type": "%s",
  "data": [
-  {"cpm": "%d"},
-  {"accu_cpm": "%d"},
-  {"rate_nSv-h": "%.1f"},
-  {"accu_rate_nSv-h": "%.1f"}
+  {"cpm": %d},
+  {"accu_cpm": %d},
+  {"rate_nSv-h": %.1f},
+  {"accu_rate_nSv-h": %.1f}
  ]
 }
 )=====";
@@ -76,9 +76,9 @@ const char *json_format_thp_mqtt = R"=====(
 {
  "sensor_type": "%s",
  "data": [
-  {"temperature": "%.2f"},
-  {"humidity": "%.2f"},
-  {"pressure": "%.1f"}
+  {"temperature": %.2f},
+  {"humidity": %.2f},
+  {"pressure": %.1f}
  ]
 }
 )=====";
