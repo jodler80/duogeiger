@@ -295,7 +295,7 @@ void transmit_data_to_telegram(const char *tube_type, int tube_nbr, float tube_f
 
   char thp_text[60];
   bool telegram_ok;
-  char message[120];
+  char message[200];
 
   if (have_thp) {
     sprintf(thp_text, "\nBME data: %.1fC %.1f%% %.1fhPa", temperature, humidity, pressure/100);

@@ -16,48 +16,46 @@ bool speakerTick = SPEAKER_TICK;
 bool playSound = PLAY_SOUND;
 bool ledTick = LED_TICK;
 bool showDisplay = SHOW_DISPLAY;
-bool sendToCommunity = SEND2SENSORCOMMUNITY;
-bool sendToMadavi = SEND2MADAVI;
-bool sendToLora = SEND2LORA;
-bool sendToBle = SEND2BLE;
-bool soundLocalAlarm = LOCAL_ALARM_SOUND;
-
 char speakerTick_c[CHECKBOX_LEN];
 char playSound_c[CHECKBOX_LEN];
 char ledTick_c[CHECKBOX_LEN];
 char showDisplay_c[CHECKBOX_LEN];
+
+bool sendToCommunity = SEND2SENSORCOMMUNITY;
+bool sendToMadavi = SEND2MADAVI;
+bool sendToLora = SEND2LORA;
+bool sendToBle = SEND2BLE;
 char sendToCommunity_c[CHECKBOX_LEN];
 char sendToMadavi_c[CHECKBOX_LEN];
 char sendToLora_c[CHECKBOX_LEN];
 char sendToBle_c[CHECKBOX_LEN];
-char soundLocalAlarm_c[CHECKBOX_LEN];
 
 char appeui[17] = "";
 char deveui[17] = "";
 char appkey[IOTWEBCONF_WORD_LEN] = "";
 static bool isLoraBoard;
 
+bool soundLocalAlarm = LOCAL_ALARM_SOUND;
+char soundLocalAlarm_c[CHECKBOX_LEN];
 float localAlarmThreshold = LOCAL_ALARM_THRESHOLD;
 int localAlarmFactor = (int)LOCAL_ALARM_FACTOR;
 
-char localDeviceName[33] = "MultiGeiger Device";
-
-long sendDataToMessengerEvery = (long)SEND_DATA_TO_MESSENGER_EVERY;
-bool sendLocalAlarmToMessenger = SEND_LOCAL_ALARM_TO_MESSENGER;
 char telegramBotToken[50] = "";  // "XXXXXXXXXX:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 char telegramChatId[12] = "";  // "1234567890"
-
+long sendDataToMessengerEvery = (long)SEND_DATA_TO_MESSENGER_EVERY;
+bool sendLocalAlarmToMessenger = SEND_LOCAL_ALARM_TO_MESSENGER;
 char sendLocalAlarmToMessenger_c[CHECKBOX_LEN];
 
-long sendDataToMqttEvery = (long)SEND_DATA_TO_MQTT_EVERY;
 char mqttServer[100] = "";
 int mqttPort = 1883;  // default for MQTT: 1883
 char mqttUsername[30] = "";
 char mqttPassword[30] = "";
-char mqttChannelPrefix[50] = "/multigeiger";
+char mqttChannelPrefix[50] = "multigeiger";
+long sendDataToMqttEvery = (long)SEND_DATA_TO_MQTT_EVERY;
 bool sendLocalAlarmToMqtt = SEND_LOCAL_ALARM_TO_MQTT;
-
 char sendLocalAlarmToMqtt_c[CHECKBOX_LEN];
+
+char localDeviceName[33] = "MultiGeiger Device";
 
 iotwebconf::ParameterGroup grpMisc = iotwebconf::ParameterGroup("misc", "Misc. Settings");
 iotwebconf::CheckboxParameter startSoundParam = iotwebconf::CheckboxParameter("Start sound", "startSound", playSound_c, CHECKBOX_LEN, playSound);
@@ -75,7 +73,7 @@ iotwebconf::ParameterGroup grpLoRa = iotwebconf::ParameterGroup("lora", "LoRa Se
 iotwebconf::CheckboxParameter sendToLoraParam = iotwebconf::CheckboxParameter("LoRa/TTN ALWAYS DISABLED!", "send2lora", sendToLora_c, CHECKBOX_LEN, sendToLora);
 iotwebconf::TextParameter deveuiParam = iotwebconf::TextParameter("DEVEUI", "deveui", deveui, 17);
 iotwebconf::TextParameter appeuiParam = iotwebconf::TextParameter("APPEUI", "appeui", appeui, 17);
-iotwebconf::TextParameter appkeyParam = iotwebconf::TextParameter("APPKEY", "appkey", appkey, 33);
+iotwebconf::TextParameter appkeyParam = iotwebconf::TextParameter("APPKEY", "appkey", appkey, IOTWEBCONF_WORD_LEN);
 
 iotwebconf::ParameterGroup grpAlarm = iotwebconf::ParameterGroup("alarm", "Local Alarm Settings");
 iotwebconf::CheckboxParameter soundLocalAlarmParam = iotwebconf::CheckboxParameter("Enable local alarm sound", "soundLocalAlarm", soundLocalAlarm_c, CHECKBOX_LEN, soundLocalAlarm);
@@ -91,12 +89,7 @@ iotwebconf::IntTParameter<int16_t> localAlarmFactorParam =
   min(2).max(100).
   step(1).placeholder("2..100").build();
 
-iotwebconf::ParameterGroup grpMessenger = iotwebconf::ParameterGroup("messenger", "Messenger Settings");
-iotwebconf::TextTParameter<33> localDeviceNameParam =
-  iotwebconf::Builder<iotwebconf::TextTParameter<33>>("localDeviceName").
-  label("Name this specific device").
-  defaultValue(localDeviceName).
-  build();
+iotwebconf::ParameterGroup grpMessenger = iotwebconf::ParameterGroup("messenger", "Telegram Messenger Settings");
 iotwebconf::IntTParameter<int32_t> sendDataToMessengerEveryParam =
   iotwebconf::Builder<iotwebconf::IntTParameter<int32_t>>("sendDataToMessengerEvery").
   label("Send data via Messenger every n sec\n(0=never,3600=1/h,86400=1/d,604800=1/week)").
@@ -138,11 +131,18 @@ iotwebconf::TextTParameter<50> mqttChannelPrefixParam =
   defaultValue(mqttChannelPrefix).
   build();
 
+iotwebconf::ParameterGroup grpDevice = iotwebconf::ParameterGroup("device", "Generic Device Settings");
+iotwebconf::TextTParameter<33> localDeviceNameParam =
+  iotwebconf::Builder<iotwebconf::TextTParameter<33>>("localDeviceName").
+  label("Name this specific device").
+  defaultValue(localDeviceName).
+  build();
+
 // This only needs to be changed if the layout of the configuration is changed.
 // Appending new variables does not require a new version number here.
 // If this value is changed, ALL configuration variables must be re-entered,
 // including the WiFi credentials.
-#define CONFIG_VERSION "015"
+#define CONFIG_VERSION "016"
 
 DNSServer dnsServer;
 WebServer server(80);
@@ -222,23 +222,27 @@ void loadConfigVariables(void) {
   playSound = startSoundParam.isChecked();
   ledTick = ledTickParam.isChecked();
   showDisplay = showDisplayParam.isChecked();
+
   sendToCommunity = sendToCommunityParam.isChecked();
   sendToMadavi = sendToMadaviParam.isChecked();
   sendToLora = sendToLoraParam.isChecked();
   sendToBle = sendToBleParam.isChecked();
+
   soundLocalAlarm = soundLocalAlarmParam.isChecked();
   localAlarmThreshold = localAlarmThresholdParam.value();
   localAlarmFactor = localAlarmFactorParam.value();
-  memcpy(localDeviceName, String(localDeviceNameParam.value()).c_str(), 33);
+
   sendDataToMessengerEvery = sendDataToMessengerEveryParam.value();
   sendLocalAlarmToMessenger = sendLocalAlarmToMessengerParam.isChecked();
-  sendDataToMqttEvery = sendDataToMqttEveryParam.value();
-  sendLocalAlarmToMqtt = sendLocalAlarmToMqttParam.isChecked();
+
   memcpy(mqttServer, String(mqttServerParam.value()).c_str(), 100);
   mqttPort = mqttPortParam.value();
   memcpy(mqttUsername, String(mqttUsernameParam.value()).c_str(), 30);
-  memcpy(mqttChannelPrefix, String(mqttChannelPrefixParam.value()).c_str(), 50);
+  sendDataToMqttEvery = sendDataToMqttEveryParam.value();
   sendLocalAlarmToMqtt = sendLocalAlarmToMqttParam.isChecked();
+  memcpy(mqttChannelPrefix, String(mqttChannelPrefixParam.value()).c_str(), 50);
+
+  memcpy(localDeviceName, String(localDeviceNameParam.value()).c_str(), 33);
 
 }
 
@@ -267,7 +271,7 @@ void setup_webconf() {
   iotWebConf.getThingNameParameter()->label = "Geiger accesspoint SSID";
   iotWebConf.getApPasswordParameter()->label = "Geiger accesspoint password";
   iotWebConf.getWifiSsidParameter()->label = "WiFi client SSID";
-  iotWebConf.getWifiPasswordParameter()->label = "WiFi client password";
+  iotWebConf.getWifiPasswordParameter()->label = "WiFi client password (max 33 chars!)";
 
   // add the setting parameter
   grpMisc.addItem(&startSoundParam);
@@ -275,10 +279,12 @@ void setup_webconf() {
   grpMisc.addItem(&ledTickParam);
   grpMisc.addItem(&showDisplayParam);
   iotWebConf.addParameterGroup(&grpMisc);
+
   grpTransmission.addItem(&sendToCommunityParam);
   grpTransmission.addItem(&sendToMadaviParam);
   grpTransmission.addItem(&sendToBleParam);
   iotWebConf.addParameterGroup(&grpTransmission);
+
   // if (isLoraBoard) {
   //   grpLoRa.addItem(&sendToLoraParam);
   //   grpLoRa.addItem(&deveuiParam);
@@ -286,12 +292,12 @@ void setup_webconf() {
   //   grpLoRa.addItem(&appkeyParam);
   //   iotWebConf.addParameterGroup(&grpLoRa);
   // }
+
   grpAlarm.addItem(&soundLocalAlarmParam);
   grpAlarm.addItem(&localAlarmThresholdParam);
   grpAlarm.addItem(&localAlarmFactorParam);
   iotWebConf.addParameterGroup(&grpAlarm);
 
-  grpMessenger.addItem(&localDeviceNameParam);
   grpMessenger.addItem(&sendDataToMessengerEveryParam);
   grpMessenger.addItem(&sendLocalAlarmToMessengerParam);
   grpMessenger.addItem(&telegramBotTokenParam);
@@ -306,6 +312,9 @@ void setup_webconf() {
   grpMqtt.addItem(&mqttPasswordParam);
   grpMqtt.addItem(&mqttChannelPrefixParam);
   iotWebConf.addParameterGroup(&grpMqtt);
+
+  grpDevice.addItem(&localDeviceNameParam);
+  iotWebConf.addParameterGroup(&grpDevice);
 
   iotWebConf.init();
 
