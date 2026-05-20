@@ -172,7 +172,6 @@ void process_GMC(unsigned long current_ms, unsigned long current_counts, unsigne
   if ((current_ms - saved_state[HEARTBEAT].timestamp) >= event_interval[HEARTBEAT]) {
     unsigned long counts = current_counts - saved_state[HEARTBEAT].counts;
     int dt = gm_count_timestamp - saved_state[HEARTBEAT].last_count_timestamp;
-    unsigned int current_cpm = (dt != 0) ? (int)(counts * 60000 / dt) : 0;
     int hv_pulses = current_hv_pulses - saved_state[HEARTBEAT].hv_pulses;
     accumulated_time += dt;
     accumulated_GMC_counts = current_counts;
@@ -180,6 +179,7 @@ void process_GMC(unsigned long current_ms, unsigned long current_counts, unsigne
 
     // calculate the current count rate and dose rate
     float count_rate = (dt != 0) ? (float)counts * 1000.0 / (float)dt : 0.0;
+    unsigned int current_cpm = (int)(count_rate * 60);
     float dose_rate = count_rate * GMC_factor_uSvph;
 
     // calculate the count rate and dose rate over the complete time from start
@@ -230,9 +230,9 @@ void process_GMC(unsigned long current_ms, unsigned long current_counts, unsigne
       // adapt difference data to event's last saved state
       counts = current_counts - saved_state[st].counts;
       dt = gm_count_timestamp - saved_state[st].last_count_timestamp;
-      current_cpm = (dt != 0) ? (int)(counts * 60000 / dt) : 0;
       hv_pulses = current_hv_pulses - saved_state[st].hv_pulses;
       count_rate = (dt != 0) ? (float)counts * 1000.0 / (float)dt : 0.0;
+      current_cpm = (int)(count_rate * 60);
       dose_rate = count_rate * GMC_factor_uSvph;
 
       // 4. (s. above) add commands for new event to switch case structure. That's it.
