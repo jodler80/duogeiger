@@ -3,6 +3,7 @@
 
 #include "log.h"
 #include "speaker.h"
+#include "transmission.h"
 
 #include "IotWebConf.h"
 #include "IotWebConfTParameter.h"
@@ -179,6 +180,60 @@ char *buildSSID() {
   return ssid;
 }
 
+void handleStatus(void) {
+  const MeasurementData& m = get_last_measurement();
+  char page[2500];
+  if (!m.valid) {
+    snprintf(page, sizeof(page),
+      "<!DOCTYPE html><html><head>"
+      "<meta name='viewport' content='width=device-width,initial-scale=1,user-scalable=no'/>"
+      "<meta http-equiv='refresh' content='15'/>"
+      "<title>DuoGeiger Status</title>"
+      "<style>body{text-align:center;font-family:verdana;padding:10px;}a{color:#16A1E7;}</style></head><body>"
+      "<h1>DuoGeiger</h1>"
+      "<p>Warte auf erstes Messintervall (~2.5 min)...</p>"
+      "<p><a href='/'>Home</a> &nbsp; <a href='/config'>Config</a></p>"
+      "</body></html>");
+  } else {
+    char thp_block[400] = "";
+    if (m.have_thp) {
+      snprintf(thp_block, sizeof(thp_block),
+        "<h2>Umgebung</h2><table>"
+        "<tr><td>Temperatur</td><td><b>%.1f</b> &deg;C</td></tr>"
+        "<tr><td>Luftfeuchte</td><td><b>%.1f</b> %%</td></tr>"
+        "<tr><td>Luftdruck</td><td><b>%.1f</b> hPa</td></tr>"
+        "</table>",
+        m.temperature, m.humidity, m.pressure);
+    }
+    snprintf(page, sizeof(page),
+      "<!DOCTYPE html><html><head>"
+      "<meta name='viewport' content='width=device-width,initial-scale=1,user-scalable=no'/>"
+      "<meta http-equiv='refresh' content='30'/>"
+      "<title>DuoGeiger Status</title>"
+      "<style>body{text-align:center;font-family:verdana;padding:10px;}"
+      "table{margin:auto;border-collapse:collapse;min-width:260px;}"
+      "td{padding:7px 15px;text-align:left;border-bottom:1px solid #ddd;}"
+      "td:last-child{font-weight:bold;text-align:right;}"
+      "h2{color:#444;}.unit{font-weight:normal;font-size:.8em;color:#888;}"
+      "a{color:#16A1E7;}</style></head><body>"
+      "<h1>DuoGeiger</h1>"
+      "<h2>Strahlung</h2><table>"
+      "<tr><td>CPM</td><td><b>%u</b> <span class='unit'>Z&auml;hlungen/min</span></td></tr>"
+      "<tr><td>Dosisleistung</td><td><b>%.1f</b> <span class='unit'>nSv/h</span></td></tr>"
+      "<tr><td>Z&auml;hlungen</td><td><b>%u</b></td></tr>"
+      "<tr><td>Messzeit</td><td><b>%.1f</b> <span class='unit'>s</span></td></tr>"
+      "<tr><td>HV-Pulse</td><td><b>%u</b></td></tr>"
+      "</table>"
+      "%s"
+      "<p style='margin-top:20px;font-size:.7em;color:#aaa;'>Auto-Refresh: 30s</p>"
+      "<p><a href='/'>Home</a> &nbsp; <a href='/config'>Config</a></p>"
+      "</body></html>",
+      m.cpm, m.dose_nsvph, m.counts, m.sample_ms / 1000.0f, m.hv_pulses,
+      thp_block);
+  }
+  server.send(200, "text/html;charset=UTF-8", page);
+}
+
 void handleRoot(void) {  // Handle web requests to "/" path.
   // -- Let IotWebConf test and handle captive portal requests.
   if (iotWebConf.handleCaptivePortal()) {
@@ -190,10 +245,13 @@ void handleRoot(void) {  // Handle web requests to "/" path.
     "<html lang='en'>"
     "<head>"
     "<meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no' />"
-    "<title>MultiGeiger Configuration</title>"
+    "<title>DuoGeiger</title>"
     "</head>"
     "<body>"
-    "<h1>Configuration</h1>"
+    "<h1>DuoGeiger</h1>"
+    "<p>"
+    "Go to the <a href='status'>status page</a> to see current measurements."
+    "</p>"
     "<p>"
     "Go to the <a href='config'>config page</a> to change settings or update firmware."
     "</p>"
@@ -322,6 +380,7 @@ void setup_webconf() {
 
   // -- Set up required URL handlers on the web server.
   server.on("/", handleRoot);
+  server.on("/status", handleStatus);
   server.on("/config", [] { iotWebConf.handleConfig(); });
   server.onNotFound([]() {
     iotWebConf.handleNotFound();

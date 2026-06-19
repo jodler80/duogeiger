@@ -12,6 +12,7 @@
 #include "display.h"
 #include "userdefines.h"
 #include "webconf.h"
+#include "tube.h"
 
 #include "transmission.h"
 
@@ -85,6 +86,11 @@ const char *json_format_thp_mqtt = R"=====(
 
 static String http_software_version;
 static String chipID;
+static MeasurementData last_measurement = {false};
+
+const MeasurementData& get_last_measurement() {
+  return last_measurement;
+}
 
 typedef struct https_client {
   WiFiClientSecure *wc;
@@ -237,6 +243,10 @@ int send_http_thp(HttpsClient *client, const char *host, float temperature, floa
 // Send data to web servers for sensor data with predefined interval of MEASUREMENT, default 150 s / 2.5 min. No alarm handling.
 void transmit_data_to_web(const char *tube_type, int tube_nbr, unsigned int dt, unsigned int hv_pulses, unsigned int gm_counts, unsigned int cpm,
                    int have_thp, float temperature, float humidity, float pressure, int wifi_status) {
+  float dose_nsvph = (dt > 0) ? ((float)cpm / 60.0f) * tubes[TUBE_TYPE].cps_to_uSvph * 1000.0f : 0.0f;
+  last_measurement = {true, cpm, gm_counts, hv_pulses, dt, dose_nsvph,
+                      (bool)have_thp, temperature, humidity, pressure};
+
   if (wifi_status != ST_WIFI_CONNECTED)
     return;
 

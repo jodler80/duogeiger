@@ -14,6 +14,22 @@
 #define XPIN_RADIATION 19
 #define XPIN_BME280 11
 
+// Last completed measurement cycle — used by the /status web page.
+struct MeasurementData {
+  bool valid;
+  unsigned int cpm;
+  unsigned int counts;
+  unsigned int hv_pulses;
+  unsigned int sample_ms;
+  float dose_nsvph;
+  bool have_thp;
+  float temperature;
+  float humidity;
+  float pressure;
+};
+
+const MeasurementData& get_last_measurement();
+
 void setup_transmission(const char *version, char *ssid);
 void transmit_data_to_web(const char *tube_type, int tube_nbr, unsigned int dt, unsigned int hv_pulses, unsigned int gm_counts, unsigned int cpm,
                    int have_thp, float temperature, float humidity, float pressure, int wifi_status);
