@@ -1,5 +1,7 @@
 # DuoGeiger
 
+**GitHub:** https://github.com/jodler80/duogeiger
+
 Fork von [ecocurious/MultiGeiger](https://github.com/ecocurious2/MultiGeiger) — Geigerzähler auf ESP32-Basis mit MQTT, Telegram und erweiterter Statusseite.
 
 ## Unterschiede zum Original
@@ -190,8 +192,21 @@ https://multigeiger.readthedocs.org/ (Englisch + Deutsch)
 
 ---
 
+## Changelog
+
+| Commit | Änderung |
+|--------|----------|
+| `78dbe27` | Statusseite: einheitliche Tabellenbreite und Ausrichtung |
+| `6c1e8b6` | Bugfix: Stack-Overflow beim Aufruf von `/status` nach längerem Betrieb |
+| `8d37770` | Statusseite: Strahlenstatus-Badge, Systeminfos, Ø-Dosis; MQTT: geteilte Topics, deutsche Feldnamen, Hostname als Device-ID |
+| `8d02aa2` | Bugfix: ISR-Crash durch MCPWM-API-Aufruf während NVS-Schreibzugriff |
+| `fc5d491` | THp-Sensor: BSEC/BME680 entfernt, nur noch BME280 |
+
+---
+
 ## Links
 
+- Dieses Projekt: https://github.com/jodler80/duogeiger
 - Upstream-Projekt: https://github.com/ecocurious2/MultiGeiger
 - Multigeiger-Karte: https://multigeiger.ecocurious.de/
 - Ecocurious-Projektseite: https://ecocurious.de/projekte/multigeiger-2/
