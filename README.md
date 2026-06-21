@@ -1,77 +1,197 @@
-## DuoGeiger
+# DuoGeiger
 
-### EN
-This is a fork from [ecocurious's Multigeiger](https://github.com/ecocurious2/MultiGeiger) project:
+Fork von [ecocurious/MultiGeiger](https://github.com/ecocurious2/MultiGeiger) — Geigerzähler auf ESP32-Basis mit MQTT, Telegram und erweiterter Statusseite.
 
-The MultiGeiger is a radioactivity measurement device, based on an ESP32 microcontroller. 
-The DuoGeiger is a modified version of the original Multigeiger:
+## Unterschiede zum Original
 
-* Removed LoRaWAN modules, Wifi/BLE radio support only
-* Added MQTT transmission
-* Added option to send messages and alerts to Telegram
+| Feature | MultiGeiger | DuoGeiger |
+|---------|------------|-----------|
+| LoRaWAN | ✓ | ✗ entfernt |
+| WiFi / BLE | ✓ | ✓ |
+| MQTT | ✗ | ✓ |
+| Telegram | ✗ | ✓ |
+| Statusseite `/status` | einfach | erweitert (Strahlenstatus, System, Ø-Dosis) |
+| Default-Hostname | `ESP32-<ID>` | `duogeiger-<ID>` |
 
-Both additional modules can be configured in the web interface.
+---
 
-The documentation points to the original Multigeiger, but most of it is still valid for the DuoGeiger.
+## Hardware
 
-### DE
+**Heltec WiFi LoRa 32 V2**
+- Chip: ESP32-D0WDQ6, 240 MHz, 320 KB RAM, 8 MB Flash
+- Kristall: 26 MHz
+- Onboard-LED: GPIO 25
+- Boot-Modus: GPIO 0 (PRG-Taste)
+- Reset: EN (RST-Taste)
 
-Der MultiGeiger ist ein Messgerät für Radioaktivität auf Basis eines ESP32-Mikrocontrollers. 
-Der DuoGeiger ist eine modifizierte Version des ursprünglichen Multigeigers:
+---
 
-* LoRaWAN-Module entfernt, Funkübertragung nur noch via Wifi/BLE
-* MQTT-Übertragung hinzugefügt
-* Option zum Senden von Nachrichten und Warnungen an Telegram hinzugefügt
+## Erstkonfiguration
 
-Beide zusätzlichen Module können in der Weboberfläche konfiguriert werden.
+### 1. Gerät starten
 
-Die Dokumentation verweist auf den ursprünglichen Multigeiger, aber die meisten Informationen sind auch für den DuoGeiger gültig.
+Nach dem ersten Flash erscheint ein WLAN-Accesspoint:
 
+| Parameter | Wert |
+|-----------|------|
+| SSID | `duogeiger-<ChipID>` |
+| Passwort | **`ESP32Geiger`** |
 
-## Telegram - REQUIRES WIFI CONNECTION!
+### 2. Webkonfiguration öffnen
 
-To communicate with the Telegram Messenger on your phone you need to create a bot.
+Nach Verbindung mit dem AP im Browser aufrufen:
 
-Starting point: https://core.telegram.org/bots
+```
+http://192.168.4.1
+```
 
-You will get a Bot token, in this form: ```"XXXXXXXXXX:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"```
+Login für `/config`:
+- **Benutzername:** `admin`
+- **Passwort:** `ESP32Geiger` (= das AP-Passwort, beim ersten Start ändern!)
 
-In order to get MultiGeiger messages to your specific chat, you need the ChatID in this form ```"123456789"```
+### 3. Im eingebauten WLAN
 
-Add the bot to a group together with @RawDataBot, which will print the ChatID, s. e.g. [here at stackoverflow](https://stackoverflow.com/questions/32423837/telegram-bot-how-to-get-a-group-chat-id)
+Sobald das Gerät mit dem Heimnetz verbunden ist, ist die Oberfläche unter seiner IP erreichbar:
 
-Please provide the token and the ChatID via Web Config.
+```
+http://<IP-Adresse>/        → Startseite
+http://<IP-Adresse>/status  → Messwerte & Systemstatus
+http://<IP-Adresse>/config  → Konfiguration
+```
 
-## MQTT - REQUIRES WIFI CONNECTION!
+Die aktuelle IP steht auf der Statusseite und wird per MQTT im `info`-Topic übertragen.
 
-To communicate with MQTT broker, please provide server address and credentials via Web Config
+---
 
-MQTT channel/topic prefix can be defined in Web Config. 
+## Statusseite `/status`
 
-Final channels/topics are
-* ```<prefix>/esp32-<###>/radiation``` for radiation data (cpm, accumulated cpm, rate, accumulated rate in nSv/h)
-* ```<prefix>/esp32-<###>/environmental``` for environmental data if installed (temperature, rel. humidity, air pressure)
+Die Statusseite zeigt:
 
+**Strahlenstatus** (farbiger Badge, direkt nach dem Titel):
 
-## Documentation
+| Farbe | Status | Schwelle |
+|-------|--------|---------|
+| Grün | Normal | < 1,5 µSv/h |
+| Gelb | Erhöht | 1,5 – 10 µSv/h |
+| Orange | Deutlich erhöht | 10 – 80 µSv/h |
+| Rot | Hohe Strahlung | 80 – 350 µSv/h |
+| Dunkelrot | ☢ STRAHLUNGSALARM | ≥ 350 µSv/h |
 
-https://multigeiger.readthedocs.org/  (english + deutsch)
+Referenz: [Wikipedia – Radiologischer Notfall: Dosis-Eckwerte](https://de.wikipedia.org/wiki/Radiologischer_Notfall#Dosis-Eckwerte)
 
-There is our new, versioned and translated documentation (see the box at the
-lower right there to switch languages and documentation versions)!
+**Strahlung:**
+- CPM, Dosisleistung (nSv/h), Ø seit Start (nSv/h), Zählungen, Messzeit, HV-Pulse
 
-Dort ist unsere neue, versionierte und übersetzte Doku (siehe die Box
-rechts unten, mit der man Sprache und Version umschalten kann)!
+**System:**
+- Version, Röhrentyp, Hostname, IP, Laufzeit, WLAN-Qualität (dBm), MQTT-Status
 
-## Quicklinks
+---
 
-* Default Wifi-Password: "ESP32Geiger"
+## MQTT
 
-* Multigeiger map / Karte:
-  
-  https://multigeiger.ecocurious.de/
+Benötigt WiFi-Verbindung. Server und Zugangsdaten in der Webkonfiguration eintragen.
 
-* Übersichtsseite bei Ecocurious / Ecocurious project overview page (German):
+### Topics
 
-  https://ecocurious.de/projekte/multigeiger-2/
+Basis-Topic: `<Prefix>/<Hostname>/`
 
+| Topic | Inhalt | Intervall |
+|-------|--------|-----------|
+| `.../radiation` | CPM, Dosisleistung_nSvh, Schnitt_nSvh, Zaehlungen, Messzeit_s, HV_Pulse, Strahlenstatus | konfigurierbar (Standard: 250 s) |
+| `.../environmental` | Temperatur_C, Luftfeuchte_pct, Luftdruck_hPa | wie radiation (nur wenn Sensor vorhanden) |
+| `.../info` | Hostname, IP, Version, TubeType | beim Boot, alle 24 h, bei IP-Änderung (retained) |
+
+Das `info`-Topic wird mit `retain=true` gesendet — ein neu verbundener Client bekommt sofort den letzten Stand.
+
+Der Hostname im Topic entspricht dem in der Webkonfiguration eingestellten Namen (Standard: `duogeiger-<ChipID>`).
+
+---
+
+## Telegram
+
+Bot-Token und Chat-ID in der Webkonfiguration eintragen.
+Einstieg: https://core.telegram.org/bots
+
+---
+
+## Compilieren
+
+### Voraussetzungen
+
+- [PlatformIO](https://platformio.org/) (VS Code Extension oder CLI)
+- Python 3.x
+
+### Build
+
+```bash
+cd duogeiger
+pio run -e geiger
+# oder:
+python -m platformio run -e geiger
+```
+
+### userdefines.h anlegen
+
+Vor dem ersten Build die Beispieldatei kopieren:
+
+```bash
+cp duogeiger/userdefines-example.h duogeiger/userdefines.h
+```
+
+Die Datei enthält Tube-Typ und weitere Compile-Zeit-Einstellungen (nicht im Git).
+
+---
+
+## Firmware flashen
+
+### Voraussetzungen
+
+- Python mit esptool: `pip install esptool`
+- Gerät über USB verbunden (COM6 unter Windows, ggf. anpassen)
+
+### Bootloader-Modus aktivieren
+
+Das Gerät ist **empfindlich gegenüber USB-Verbindungsproblemen**. Bei Verbindungsfehlern:
+1. USB-Kabel abziehen
+2. An einem anderen USB-Port / USB-Hub neu einstecken
+3. Bootloader-Modus manuell aktivieren:
+   - **PRG**-Taste gedrückt halten
+   - **RST**-Taste kurz drücken und loslassen
+   - **PRG**-Taste loslassen
+   - Gerät sollte jetzt still sein (kein Piepton = Download-Modus aktiv)
+
+### Flash-Befehl
+
+```powershell
+python -m esptool --chip esp32 --port COM6 --baud 115200 `
+  --before no-reset --connect-attempts 3 write-flash `
+  0x1000  ".pio\build\geiger\bootloader.bin" `
+  0x8000  ".pio\build\geiger\partitions.bin" `
+  0x10000 ".pio\build\geiger\firmware.bin"
+```
+
+**Wichtige Hinweise:**
+- Nur **115200 Baud** ist stabil — höhere Baudraten brechen nach `bootloader.bin` ab
+- `--before no-reset` ist nötig, da der Auto-Reset nicht zuverlässig funktioniert
+- esptool **v5.x** schlägt mit `Invalid head of packet` fehl → stattdessen esptool aus PlatformIO nutzen (v4.x):
+  ```powershell
+  python -m platformio run -e geiger --target upload
+  ```
+
+### Nach dem Flash
+
+Das Gerät startet automatisch, spielt eine kurze Melodie und beginnt zu messen. Die erste Messung erscheint nach ca. 2,5 Minuten auf der Statusseite.
+
+---
+
+## Dokumentation (Upstream)
+
+https://multigeiger.readthedocs.org/ (Englisch + Deutsch)
+
+---
+
+## Links
+
+- Upstream-Projekt: https://github.com/ecocurious2/MultiGeiger
+- Multigeiger-Karte: https://multigeiger.ecocurious.de/
+- Ecocurious-Projektseite: https://ecocurious.de/projekte/multigeiger-2/
