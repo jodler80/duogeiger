@@ -26,11 +26,18 @@ struct MeasurementData {
   float temperature;
   float humidity;
   float pressure;
+  char tube_type[16];
+  char version[32];
 };
 
 const MeasurementData& get_last_measurement();
+bool is_mqtt_connected();
 
-void setup_transmission(const char *version, char *ssid);
+// Radiation status helpers — shared between status page and MQTT
+const char* radiation_status_label(float dose_nsvph);  // plain text, e.g. "Normal"
+const char* radiation_status_color(float dose_nsvph);  // CSS hex color string
+
+void setup_transmission(const char *version, const char *device_name);
 void transmit_data_to_web(const char *tube_type, int tube_nbr, unsigned int dt, unsigned int hv_pulses, unsigned int gm_counts, unsigned int cpm,
                    int have_thp, float temperature, float humidity, float pressure, int wifi_status);
 void transmit_data_to_telegram(const char *tube_type, int tube_nbr, float tube_factor, unsigned int cpm, unsigned int accu_cpm, float accu_rate,

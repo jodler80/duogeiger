@@ -3,6 +3,7 @@
 // - via LoRa to TTN (to internet servers)
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <UniversalTelegramBot.h>
@@ -60,27 +61,34 @@ const char *json_format_thp = R"=====(
 }
 )=====";
 
+// Sent on every measurement interval
 const char *json_format_radiation_mqtt = R"=====(
 {
- "version": "%s",
- "tube_type": "%s",
- "data": [
-  {"cpm": %d},
-  {"accu_cpm": %d},
-  {"rate_nSv-h": %.1f},
-  {"accu_rate_nSv-h": %.1f}
- ]
+ "CPM": %u,
+ "Dosisleistung_nSvh": %.1f,
+ "Schnitt_nSvh": %.1f,
+ "Zaehlungen": %u,
+ "Messzeit_s": %.1f,
+ "HV_Pulse": %u,
+ "Strahlenstatus": "%s"
 }
 )=====";
 
 const char *json_format_thp_mqtt = R"=====(
 {
- "sensor_type": "%s",
- "data": [
-  {"temperature": %.2f},
-  {"humidity": %.2f},
-  {"pressure": %.1f}
- ]
+ "Temperatur_C": %.2f,
+ "Luftfeuchte_pct": %.1f,
+ "Luftdruck_hPa": %.1f
+}
+)=====";
+
+// Sent once after boot, every 24h, and on IP change
+const char *json_format_info_mqtt = R"=====(
+{
+ "Hostname": "%s",
+ "IP": "%s",
+ "Version": "%s",
+ "TubeType": "%s"
 }
 )=====";
 
@@ -103,11 +111,31 @@ UniversalTelegramBot *telegram_bot;
 PubSubClient *mqtt_client;
 void mqtt_callback(char* topic, byte *payload, unsigned int length);
 
+bool is_mqtt_connected() {
+  return mqtt_client && mqtt_client->connected();
+}
+
+// Radiation status thresholds in nSv/h (1 µSv/h = 1000 nSv/h)
+const char* radiation_status_label(float dose_nsvph) {
+  if      (dose_nsvph <   1500.0f) return "Normal";
+  else if (dose_nsvph <  10000.0f) return "Erhoht";
+  else if (dose_nsvph <  80000.0f) return "Deutlich erhoht";
+  else if (dose_nsvph < 350000.0f) return "Hohe Strahlung";
+  else                             return "STRAHLUNGSALARM";
+}
+
+const char* radiation_status_color(float dose_nsvph) {
+  if      (dose_nsvph <   1500.0f) return "#2a7a2a";
+  else if (dose_nsvph <  10000.0f) return "#c8a000";
+  else if (dose_nsvph <  80000.0f) return "#c85000";
+  else if (dose_nsvph < 350000.0f) return "#b00000";
+  else                             return "#5a0000";
+}
+
 #define MQTT_RECONNECT_ATTEMPT_INTERVAL 30000  // ms
 
-void setup_transmission(const char *version, char *ssid) {
-  chipID = String(ssid);
-  chipID.replace("ESP32", "esp32");
+void setup_transmission(const char *version, const char *device_name) {
+  chipID = String(device_name);
 
   http_software_version = String(version);
 
@@ -165,11 +193,43 @@ void mqtt_callback(char* topic, byte *payload, unsigned int length) {
     log(INFO, "MQTT msg on channel %s: %s", topic, rx_buffer);
 }
 
+static String mqtt_base_topic() {
+  String t = mqttChannelPrefix;
+  t.trim();
+  if (t[0] == '/') t.remove(0, 1);
+  if (!t.endsWith("/")) t += '/';
+  return t + chipID + '/';
+}
+
 void poll_transmission(int wifi_status) {
-  static long last_mqtt_reconnect = 0;
+  static unsigned long last_mqtt_reconnect = 0;
+  static unsigned long last_info_send_ms = 0;
+  static bool info_sent_on_boot = false;
+  static String last_sent_ip = "";
+
   if (get_status(STATUS_MQTT) != ST_MQTT_OFF) {
     if (mqtt_client->connected()) {
       mqtt_client->loop();
+
+      // Send info payload: on boot, every 24h, or when IP changes
+      String current_ip = WiFi.localIP().toString();
+      bool ip_changed = (current_ip != "0.0.0.0") && (current_ip != last_sent_ip);
+      bool due_24h = info_sent_on_boot && ((millis() - last_info_send_ms) >= 86400000UL);
+
+      if (!info_sent_on_boot || due_24h || ip_changed) {
+        char info_payload[256];
+        snprintf(info_payload, sizeof(info_payload), json_format_info_mqtt,
+                 chipID.c_str(),
+                 current_ip.c_str(),
+                 http_software_version.c_str(),
+                 last_measurement.tube_type);
+        if (mqtt_client->publish((mqtt_base_topic() + "info").c_str(), info_payload, true)) {
+          info_sent_on_boot = true;
+          last_info_send_ms = millis();
+          last_sent_ip = current_ip;
+          log(INFO, "MQTT info sent (ip=%s)", current_ip.c_str());
+        }
+      }
     } else if (wifi_status == ST_WIFI_CONNECTED) {
       if (millis() - last_mqtt_reconnect > MQTT_RECONNECT_ATTEMPT_INTERVAL) {
         log(INFO, "MQTT Reconnect");
@@ -246,6 +306,8 @@ void transmit_data_to_web(const char *tube_type, int tube_nbr, unsigned int dt, 
   float dose_nsvph = (dt > 0) ? ((float)cpm / 60.0f) * tubes[TUBE_TYPE].cps_to_uSvph * 1000.0f : 0.0f;
   last_measurement = {true, cpm, gm_counts, hv_pulses, dt, dose_nsvph,
                       (bool)have_thp, temperature, humidity, pressure};
+  strncpy(last_measurement.tube_type, tube_type ? tube_type : "", sizeof(last_measurement.tube_type) - 1);
+  strncpy(last_measurement.version, http_software_version.c_str(), sizeof(last_measurement.version) - 1);
 
   if (wifi_status != ST_WIFI_CONNECTED)
     return;
@@ -349,31 +411,25 @@ void transmit_data_to_mqtt(const char *tube_type, int tube_nbr, float tube_facto
   if (!mqtt_client->connected())
     return;
 
-  String mqtt_topic;
+  String mqtt_topic = mqtt_base_topic();
   char mqtt_payload[1000];
   bool mqtt_ok;
 
-  mqtt_topic = mqttChannelPrefix;
-  mqtt_topic.trim();
-  if (mqtt_topic[0] == '/')
-    mqtt_topic.remove(0, 1);
-  if (!mqtt_topic.endsWith("/"))
-    mqtt_topic += '/';
-  mqtt_topic = mqtt_topic + chipID + '/';
   log(INFO, "Sending to MQTT server on %s", mqtt_topic.c_str());
   set_status(STATUS_MQTT, ST_MQTT_SENDING);
+  float dose_nsvph = cpm * tube_factor * 1000.0f / 60.0f;
   snprintf(mqtt_payload, 1000, json_format_radiation_mqtt,
-           http_software_version.c_str(),
-           tube_type,
            cpm,
-           accu_cpm,
-           cpm*tube_factor*1000/60,
-           accu_rate*1000);
+           dose_nsvph,
+           accu_rate * 1000.0f,
+           last_measurement.counts,
+           last_measurement.sample_ms / 1000.0f,
+           last_measurement.hv_pulses,
+           radiation_status_label(dose_nsvph));
   mqtt_ok = mqtt_client->publish(String(mqtt_topic + "radiation").c_str(), mqtt_payload);
 
   if (mqtt_ok && have_thp) {
     snprintf(mqtt_payload, 1000, json_format_thp_mqtt,
-            "bme280",
             temperature,
             humidity,
             pressure);

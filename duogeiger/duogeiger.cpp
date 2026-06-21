@@ -43,7 +43,7 @@ void setup() {
   setup_thp_sensor();
   setup_webconf();
   setup_speaker(playSound, ledTick && switches.led_on, speakerTick && switches.speaker_on);
-  setup_transmission(VERSION_STR, ssid);
+  setup_transmission(VERSION_STR, iotWebConf.getThingName());
   setup_ble(ssid, sendToBle && switches.ble_on);
   setup_log_data(SERIAL_DEBUG);
   setup_tube();

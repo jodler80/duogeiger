@@ -4,6 +4,7 @@
 #include "log.h"
 #include "speaker.h"
 #include "transmission.h"
+#include <WiFi.h>
 
 #include "IotWebConf.h"
 #include "IotWebConfTParameter.h"
@@ -176,13 +177,82 @@ unsigned long getESPchipID() {
 char *buildSSID() {
   // build SSID from ESP chip id
   uint32_t id = getESPchipID();
-  sprintf(ssid, "ESP32-%d", id);
+  sprintf(ssid, "duogeiger-%d", id);
   return ssid;
 }
 
+extern float accumulated_dose_rate;   // µSv/h, running average since boot (duogeiger.cpp)
+extern float accumulated_count_rate;  // counts/s, running average since boot (duogeiger.cpp)
+
 void handleStatus(void) {
   const MeasurementData& m = get_last_measurement();
-  char page[2500];
+
+  // uptime
+  unsigned long uptime_s = millis() / 1000;
+  unsigned long days    = uptime_s / 86400;
+  unsigned long hours   = (uptime_s % 86400) / 3600;
+  unsigned long minutes = (uptime_s % 3600) / 60;
+  unsigned long seconds = uptime_s % 60;
+  char uptime_str[32];
+  if (days > 0)
+    snprintf(uptime_str, sizeof(uptime_str), "%lud %02lu:%02lu:%02lu", days, hours, minutes, seconds);
+  else
+    snprintf(uptime_str, sizeof(uptime_str), "%02lu:%02lu:%02lu", hours, minutes, seconds);
+
+  // MQTT status
+  const char *mqtt_status;
+  if (strlen(mqttServer) < 5)
+    mqtt_status = "inaktiv";
+  else if (is_mqtt_connected())
+    mqtt_status = "<span style='color:#2a2;'>verbunden</span>";
+  else
+    mqtt_status = "<span style='color:#c00;'>getrennt</span>";
+
+  // WiFi signal quality
+  int rssi = WiFi.RSSI();
+  const char *rssi_label;
+  if      (rssi >= -50) rssi_label = "sehr gut";
+  else if (rssi >= -60) rssi_label = "gut";
+  else if (rssi >= -70) rssi_label = "mittel";
+  else if (rssi >= -80) rssi_label = "schwach";
+  else                  rssi_label = "sehr schwach";
+
+  char system_block[800];
+  snprintf(system_block, sizeof(system_block),
+    "<h2>System</h2><table>"
+    "<tr><td>Version</td><td><b>%s</b></td></tr>"
+    "<tr><td>R&ouml;hrentyp</td><td><b>%s</b></td></tr>"
+    "<tr><td>Hostname</td><td><b>%s</b></td></tr>"
+    "<tr><td>IP</td><td><b>%s</b></td></tr>"
+    "<tr><td>Laufzeit</td><td><b>%s</b></td></tr>"
+    "<tr><td>WLAN</td><td><b>%d dBm</b> <span class='unit'>(%s)</span></td></tr>"
+    "<tr><td>MQTT</td><td><b>%s</b></td></tr>"
+    "</table>",
+    m.valid ? m.version : "–",
+    m.valid ? m.tube_type : "–",
+    iotWebConf.getThingName(),
+    WiFi.localIP().toString().c_str(), uptime_str, rssi, rssi_label, mqtt_status);
+
+  // Radiation status — uses shared helpers from transmission.cpp
+  float dose = m.valid ? m.dose_nsvph : 0.0f;
+  const char *rad_label_html;
+  if      (dose <   1500.0f) rad_label_html = "Normal";
+  else if (dose <  10000.0f) rad_label_html = "Erh&ouml;ht";
+  else if (dose <  80000.0f) rad_label_html = "Deutlich erh&ouml;ht";
+  else if (dose < 350000.0f) rad_label_html = "Hohe Strahlung";
+  else                       rad_label_html = "&#9762; STRAHLUNGSALARM";
+
+  char rad_block[512];
+  snprintf(rad_block, sizeof(rad_block),
+    "<div style='display:inline-block;margin:14px auto 6px;padding:10px 24px;"
+    "background:%s;color:#fff;border-radius:6px;font-size:1.2em;font-weight:bold;'>"
+    "%s</div>"
+    "<div style='font-size:.75em;margin-bottom:8px;'>"
+    "<a href='https://de.wikipedia.org/wiki/Radiologischer_Notfall#Dosis-Eckwerte' "
+    "style='color:#16A1E7;'>Dosis-Eckwerte (Wikipedia)</a></div>",
+    radiation_status_color(dose), rad_label_html);
+
+  char page[4500];
   if (!m.valid) {
     snprintf(page, sizeof(page),
       "<!DOCTYPE html><html><head>"
@@ -191,9 +261,12 @@ void handleStatus(void) {
       "<title>DuoGeiger Status</title>"
       "<style>body{text-align:center;font-family:verdana;padding:10px;}a{color:#16A1E7;}</style></head><body>"
       "<h1>DuoGeiger</h1>"
+      "%s"
       "<p>Warte auf erstes Messintervall (~2.5 min)...</p>"
+      "%s"
       "<p><a href='/'>Home</a> &nbsp; <a href='/config'>Config</a></p>"
-      "</body></html>");
+      "</body></html>",
+      rad_block, system_block);
   } else {
     char thp_block[400] = "";
     if (m.have_thp) {
@@ -217,19 +290,24 @@ void handleStatus(void) {
       "h2{color:#444;}.unit{font-weight:normal;font-size:.8em;color:#888;}"
       "a{color:#16A1E7;}</style></head><body>"
       "<h1>DuoGeiger</h1>"
+      "%s"
       "<h2>Strahlung</h2><table>"
       "<tr><td>CPM</td><td><b>%u</b> <span class='unit'>Z&auml;hlungen/min</span></td></tr>"
       "<tr><td>Dosisleistung</td><td><b>%.1f</b> <span class='unit'>nSv/h</span></td></tr>"
+      "<tr><td>&Oslash; seit Start</td><td><b>%.1f</b> <span class='unit'>nSv/h</span></td></tr>"
       "<tr><td>Z&auml;hlungen</td><td><b>%u</b></td></tr>"
       "<tr><td>Messzeit</td><td><b>%.1f</b> <span class='unit'>s</span></td></tr>"
       "<tr><td>HV-Pulse</td><td><b>%u</b></td></tr>"
       "</table>"
       "%s"
+      "%s"
       "<p style='margin-top:20px;font-size:.7em;color:#aaa;'>Auto-Refresh: 30s</p>"
       "<p><a href='/'>Home</a> &nbsp; <a href='/config'>Config</a></p>"
       "</body></html>",
-      m.cpm, m.dose_nsvph, m.counts, m.sample_ms / 1000.0f, m.hv_pulses,
-      thp_block);
+      rad_block,
+      m.cpm, m.dose_nsvph, accumulated_dose_rate * 1000.0f,
+      m.counts, m.sample_ms / 1000.0f, m.hv_pulses,
+      thp_block, system_block);
   }
   server.send(200, "text/html;charset=UTF-8", page);
 }
@@ -326,8 +404,8 @@ void setup_webconf() {
     [](const char *userName, char *password) { httpUpdater.updateCredentials(userName, password); });
   // *INDENT-ON*
   // override the confusing default labels of IotWebConf:
-  iotWebConf.getThingNameParameter()->label = "Geiger accesspoint SSID";
-  iotWebConf.getApPasswordParameter()->label = "Geiger accesspoint password";
+  iotWebConf.getThingNameParameter()->label = "Hostname (Fallback AP-SSID)";
+  iotWebConf.getApPasswordParameter()->label = "Admin Password (Fallback AP-Password)";
   iotWebConf.getWifiSsidParameter()->label = "WiFi client SSID";
   iotWebConf.getWifiPasswordParameter()->label = "WiFi client password (max 33 chars!)";
 
