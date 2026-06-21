@@ -3,12 +3,18 @@
 
 #include <Arduino.h>
 #include <driver/mcpwm.h>
+#include <soc/gpio_struct.h>
+#include <soc/mcpwm_struct.h>
 
 #include "speaker.h"
 #include "timers.h"
 
 #define PIN_SPEAKER_OUTPUT_P 12
 #define PIN_SPEAKER_OUTPUT_N 0
+// Onboard LED — GPIO 25 on Heltec WiFi LoRa 32 V2.
+// Do NOT use LED_BUILTIN here: it can be overridden by a library macro to a wrong value,
+// and calling gpio_set_level() with an invalid pin from an ISR crashes the device.
+#define PIN_LED 25
 
 // shall the speaker / LED "tick"?
 static volatile bool speaker_tick, led_tick;  // current state
@@ -35,6 +41,53 @@ static int alarm_sequence[12] = {
 // hw timer period and microseconds -> periods conversion
 #define PERIOD_DURATION_US 1000
 #define PERIODS(us) ((us) / PERIOD_DURATION_US)
+
+// Precomputed timer clock (Hz), set in setup_speaker() after mcpwm_init().
+// All MCPWM API functions (mcpwm_start, mcpwm_stop, mcpwm_set_frequency, etc.) reside in Flash
+// (IROM, 0x4010xxxx) and must NOT be called from an ISR when the flash cache is disabled
+// (e.g. during IotWebConf NVS writes). These IRAM_ATTR helpers write the MCPWM hardware
+// registers directly — they live in DRAM (memory-mapped peripherals) and are always reachable.
+static uint32_t s_timer_clk_hz;
+
+static void IRAM_ATTR mcpwm_start_direct() {
+  MCPWM0.timer[0].timer_cfg1.timer_mod   = 1; // up-counter (restores mode after stop)
+  MCPWM0.timer[0].timer_cfg1.timer_start = 2; // run continuously
+}
+
+static void IRAM_ATTR mcpwm_stop_direct() {
+  MCPWM0.timer[0].timer_cfg1.timer_mod = 0; // freeze
+}
+
+static void IRAM_ATTR mcpwm_set_freq_direct(uint32_t freq_hz) {
+  MCPWM0.timer[0].timer_cfg0.timer_period           = s_timer_clk_hz / freq_hz;
+  MCPWM0.timer[0].timer_cfg0.timer_period_upmethod  = 0; // immediate
+}
+
+// DUTY_MODE_0 on OPR_A: active-high PWM (high at TEZ, low at TEA)
+static void IRAM_ATTR mcpwm_duty_a_normal() {
+  MCPWM0.operators[0].gen_force.gen_a_cntuforce_mode = 0; // release force
+  MCPWM0.operators[0].generator[0].gen_utez          = 2; // high at TEZ↑
+  MCPWM0.operators[0].generator[0].gen_utea          = 1; // low  at TEA↑
+}
+
+// DUTY_MODE_1 on OPR_B: active-low PWM / inverted (low at TEZ, high at TEA)
+static void IRAM_ATTR mcpwm_duty_b_inverted() {
+  MCPWM0.operators[0].gen_force.gen_b_cntuforce_mode = 0; // release force
+  MCPWM0.operators[0].generator[1].gen_utez          = 1; // low  at TEZ↑
+  MCPWM0.operators[0].generator[1].gen_utea          = 2; // high at TEA↑
+}
+
+// Force OPR_A permanently high (piezo idle: no current)
+static void IRAM_ATTR mcpwm_force_a_high() {
+  MCPWM0.operators[0].gen_force.gen_cntuforce_upmethod = 0; // immediate
+  MCPWM0.operators[0].gen_force.gen_a_cntuforce_mode   = 2; // force high
+}
+
+// Force OPR_B permanently low (piezo idle: no current)
+static void IRAM_ATTR mcpwm_force_b_low() {
+  MCPWM0.operators[0].gen_force.gen_cntuforce_upmethod = 0; // immediate
+  MCPWM0.operators[0].gen_force.gen_b_cntuforce_mode   = 1; // force low
+}
 
 void IRAM_ATTR isr_audio() {
   // this code is periodically called by a timer hw interrupt, always same period.
@@ -81,34 +134,34 @@ void IRAM_ATTR isr_audio() {
     return;  // nothing to do
   // do not access *p below here, p might point to uninitialized memory after the sequence array!
 
-  // note: by all means, **AVOID** mcpwm_set_duty() in ISR, causes floating point coprocessor troubles!
-  //       when just calling mcpwm_set_duty_**type**(), it will reuse a previously set duty cycle.
+  // Direct register writes replace all mcpwm_*() API calls (which live in Flash/IROM and
+  // must not be called from ISR when flash cache is disabled). See helpers above.
   if (frequency_mHz > 0) { // speaker on
     if (volume >= 1) {
       // high volume - MCPWM A/B outputs generate inverted signals
-      mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
-      mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B, MCPWM_DUTY_MODE_1);
+      mcpwm_duty_a_normal();
+      mcpwm_duty_b_inverted();
     } else {
       // low volume - do MCPWM on A, keep B permanently low
-      mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
-      mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B);
+      mcpwm_duty_a_normal();
+      mcpwm_force_b_low();
     }
-    // set frequency
-    mcpwm_set_frequency(MCPWM_UNIT_0, MCPWM_TIMER_0, frequency_mHz / 1000);
-    // start outputting PWM signal(s)
-    mcpwm_start(MCPWM_UNIT_0, MCPWM_TIMER_0);
+    mcpwm_set_freq_direct(frequency_mHz / 1000);
+    mcpwm_start_direct();
   } else if (frequency_mHz == 0) {  // speaker off
-    // frequency_mHz == 0 -> disable sound output
-    // stop any PWM signals
-    mcpwm_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);
-    // keep A high and B low (we have a piezo, no current flowing)
-    mcpwm_set_signal_high(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A);
-    mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B);
+    mcpwm_stop_direct();
+    // keep A high and B low (piezo idle: no current flowing)
+    mcpwm_force_a_high();
+    mcpwm_force_b_low();
   }
   // frequency_mHz == -1 -> don't touch pwm/speaker
 
-  if (led >= 0)  // led == -1 can be used as "don't touch LED"
-    digitalWrite(LED_BUILTIN, led ? HIGH : LOW);
+  if (led >= 0) {  // led == -1 can be used as "don't touch LED"
+    if (led)
+      GPIO.out_w1ts = (1UL << PIN_LED);
+    else
+      GPIO.out_w1tc = (1UL << PIN_LED);
+  }
 
   if (duration_ms > 0) {
     next = PERIODS(duration_ms * 1000);
@@ -186,7 +239,7 @@ void play(int *sequence) {
 #define TONE(f, v, led, t) {int(f * 0.75), v, led, int(t * 85)}
 
 void setup_speaker(bool playSound, bool _led_tick, bool _speaker_tick) {
-  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(PIN_LED, OUTPUT);
 
   mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, PIN_SPEAKER_OUTPUT_P);
   mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, PIN_SPEAKER_OUTPUT_N);
@@ -199,6 +252,11 @@ void setup_speaker(bool playSound, bool _led_tick, bool _speaker_tick) {
   pwm_config.duty_mode = MCPWM_DUTY_MODE_0;  // active high duty
   pwm_config.counter_mode = MCPWM_UP_COUNTER;
   mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);
+
+  // Precompute timer clock for ISR-safe frequency writes (prescales are set by mcpwm_init above).
+  s_timer_clk_hz = 160000000UL
+    / (MCPWM0.clk_cfg.clk_prescale + 1)
+    / (MCPWM0.timer[0].timer_cfg0.timer_prescale + 1);
 
   setup_audio_timer(isr_audio, PERIOD_DURATION_US);
 
