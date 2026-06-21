@@ -193,7 +193,7 @@ void handleStatus(void) {
   unsigned long hours   = (uptime_s % 86400) / 3600;
   unsigned long minutes = (uptime_s % 3600) / 60;
   unsigned long seconds = uptime_s % 60;
-  char uptime_str[32];
+  static char uptime_str[32];
   if (days > 0)
     snprintf(uptime_str, sizeof(uptime_str), "%lud %02lu:%02lu:%02lu", days, hours, minutes, seconds);
   else
@@ -217,7 +217,7 @@ void handleStatus(void) {
   else if (rssi >= -80) rssi_label = "schwach";
   else                  rssi_label = "sehr schwach";
 
-  char system_block[800];
+  static char system_block[800];
   snprintf(system_block, sizeof(system_block),
     "<h2>System</h2><table>"
     "<tr><td>Version</td><td><b>%s</b></td></tr>"
@@ -242,7 +242,7 @@ void handleStatus(void) {
   else if (dose < 350000.0f) rad_label_html = "Hohe Strahlung";
   else                       rad_label_html = "&#9762; STRAHLUNGSALARM";
 
-  char rad_block[512];
+  static char rad_block[512];
   snprintf(rad_block, sizeof(rad_block),
     "<div style='display:inline-block;margin:14px auto 6px;padding:10px 24px;"
     "background:%s;color:#fff;border-radius:6px;font-size:1.2em;font-weight:bold;'>"
@@ -252,7 +252,7 @@ void handleStatus(void) {
     "style='color:#16A1E7;'>Dosis-Eckwerte (Wikipedia)</a></div>",
     radiation_status_color(dose), rad_label_html);
 
-  char page[4500];
+  static char page[4500];
   if (!m.valid) {
     snprintf(page, sizeof(page),
       "<!DOCTYPE html><html><head>"
@@ -268,7 +268,7 @@ void handleStatus(void) {
       "</body></html>",
       rad_block, system_block);
   } else {
-    char thp_block[400] = "";
+    static char thp_block[400]; thp_block[0] = '\0';
     if (m.have_thp) {
       snprintf(thp_block, sizeof(thp_block),
         "<h2>Umgebung</h2><table>"
