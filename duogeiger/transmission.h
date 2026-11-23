@@ -26,23 +26,34 @@ struct MeasurementData {
   float temperature;
   float humidity;
   float pressure;
-  char tube_type[16];
-  char version[32];
 };
 
 const MeasurementData& get_last_measurement();
 bool is_mqtt_connected();
+int get_mqtt_state();          // PubSubClient::state(), -99 if no client
+int get_mqtt_backlog_count();  // measurement records waiting to be re-sent
 
-// Radiation status helpers — shared between status page and MQTT
-const char* radiation_status_label(float dose_nsvph);  // plain text, e.g. "Normal"
-const char* radiation_status_color(float dose_nsvph);  // CSS hex color string
+// Number of measurement records kept while MQTT is unreachable (RAM ring buffer).
+// 48 x 150 s = 2 h. Each record needs ~70 bytes.
+#ifndef MQTT_BACKLOG_SIZE
+#define MQTT_BACKLOG_SIZE 48
+#endif
 
+// Radiation status helpers (radiation_status_level/_label/_label_html/_color),
+// record type and formatting — pure logic, unit-tested on the PC.
+#include "mqtt_logic.h"
+
+// Startet konfigurierte Übertragungswege.
 void setup_transmission(const char *version, const char *device_name);
+// Sendet Messwerte über HTTP/WLAN an Webdienste.
 void transmit_data_to_web(const char *tube_type, int tube_nbr, unsigned int dt, unsigned int hv_pulses, unsigned int gm_counts, unsigned int cpm,
                    int have_thp, float temperature, float humidity, float pressure, int wifi_status);
+// Sendet Mess-/Alarmbericht an Telegram, wenn aktiv.
 void transmit_data_to_telegram(const char *tube_type, int tube_nbr, float tube_factor, unsigned int cpm, unsigned int accu_cpm, float accu_rate,
                        int have_thp, float temperature, float humidity, float pressure, int wifi_status, bool alarm_status);
+// Publiziert Messung über MQTT; nutzt Ausfallpuffer.
 void transmit_data_to_mqtt(const char *tube_type, int tube_nbr, float tube_factor, unsigned int cpm, unsigned int accu_cpm, float accu_rate,
+                       unsigned int dt, unsigned int hv_pulses, unsigned int gm_counts,
                        int have_thp, float temperature, float humidity, float pressure, int wifi_status, bool alarm_status);
 
 // Periodic keep-alive functions for transmissions:

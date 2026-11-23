@@ -1,3 +1,4 @@
+// Hilfsfunktionen für HEX-Daten und Byte-Reihenfolge.
 // Misc. utilities
 
 #include <Arduino.h>

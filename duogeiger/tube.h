@@ -11,8 +11,11 @@ typedef struct {
 
 extern TUBETYPE tubes[];
 
+// Initialisiert GM-Rohr-Elektronik und ggf. Hochspannung.
 void setup_tube(void);
+// Liest Zählerstand, Zeitstempel und Impulsabstand.
 void read_GMC(unsigned long *counts, unsigned long *timestamp, unsigned int *between);
+// Liefert Hochspannungsfehler und Anzahl der HV-Impulse.
 void read_hv(bool *hv_error, unsigned long *pulses);
 
 #endif // _TUBE_H_

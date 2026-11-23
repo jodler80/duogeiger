@@ -1,8 +1,12 @@
+// Hauptdatei: Initialisiert Module und steuert Mess-/Sendebetrieb.
 // Project: Simple Multi-Geiger
 // (c) 2019,2020 by the authors, see AUTHORS file in toplevel directory.
 // Licensed under the GPL v3 (or later), see LICENSE file in toplevel directory.
 
 #include <Arduino.h>
+#include <WiFi.h>
+#include <ArduinoOTA.h>
+#include <Update.h>
 
 #include "version.h"
 #include "log.h"
@@ -17,6 +21,25 @@
 #include "transmission.h"
 #include "ble.h"
 #include "clock.h"
+#include "diag.h"
+
+// WiFi tuning for weak connections (can be overridden in userdefines.h)
+// Disable WiFi modem sleep -> fewer missed beacons / lost packets, ~+80 mA.
+// Only applied while BLE is off: with BLE on, modem sleep is mandatory for coexistence.
+#ifndef WIFI_NO_SLEEP
+#define WIFI_NO_SLEEP true
+#endif
+// How long IotWebConf tries to (re)connect before it falls back to its own AP for a while.
+// 120 s: the DHCP server in the network took 24–60 s to hand out an address (23.11.2026);
+// with 60 s the connection was sometimes given up shortly before the IP arrived.
+#ifndef WIFI_CONNECTION_TIMEOUT_MS
+#define WIFI_CONNECTION_TIMEOUT_MS 120000
+#endif
+// Firmware update over the network via PlatformIO/espota (port 3232).
+// Password = admin password of the web configuration.
+#ifndef ENABLE_ARDUINO_OTA
+#define ENABLE_ARDUINO_OTA true
+#endif
 
 // Measurement interval (default 2.5min) [sec]
 #define MEASUREMENT_INTERVAL 150
@@ -33,15 +56,109 @@
 
 // DIP switches
 static Switches switches;
+// Seit-Start-Mittelwerte für Zählrate und Dosis.
+// Werden für Anzeige, Alarme und Telegram genutzt.
 float accumulated_count_rate = 0.0, accumulated_dose_rate = 0.0;
 
+static bool wifi_ble_active = false;
+
+// Wählt WiFi-Sleep je nach BLE und setzt Sendeleistung.
+static void apply_wifi_tuning() {
+  if (WIFI_NO_SLEEP && !wifi_ble_active)
+    WiFi.setSleep(false);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);  // max. (also the core default, set explicitly)
+}
+
+// Registriert IotWebConf-WLAN-Callbacks für Tuning und Statusprotokoll.
+void setup_wifi_tuning(bool ble_active) {
+  wifi_ble_active = ble_active;
+  iotWebConf.setWifiConnectionTimeoutMs(WIFI_CONNECTION_TIMEOUT_MS);
+  // IotWebConf already sets the hostname (= thing name) before WiFi.begin().
+  iotWebConf.setWifiConnectionHandler([](const char *ssid, const char *password) {
+    apply_ip_config();  // fixed IP from the web configuration, otherwise DHCP
+    WiFi.begin(ssid, password);
+    apply_wifi_tuning();
+  });
+  iotWebConf.setWifiConnectionCallback([]() {
+    apply_wifi_tuning();
+    diag_wifi_connected();
+    log(INFO, "WiFi connected: RSSI %d dBm, channel %d, BSSID %s, sleep %s",
+        WiFi.RSSI(), WiFi.channel(), WiFi.BSSIDstr().c_str(), WiFi.getSleep() ? "on" : "off");
+  });
+}
+
+// Aktiviert Netzwerk-OTA erst, wenn WLAN verbunden ist.
+// Der ESP32-Core startet nach AUTH_FAIL (Grund 202) keinen neuen Verbindungsversuch
+// (nur beim allerersten Connect einmal) und meldet dann WL_CONNECT_FAILED. IotWebConf würde
+// bis zum Zeitlimit warten, aufgeben und 30 s in den eigenen Access-Point-Modus gehen.
+// Beobachtet (Fritzbox): AUTH_FAIL, wenn der Access Point nach einem Reset noch die alte
+// Anmeldung hält. Daher: nur im Zustand WL_CONNECT_FAILED nach 5 s selbst neu versuchen –
+// nie, solange eine Verbindung noch auf ihre IP-Adresse (DHCP) wartet.
+#define WIFI_AUTH_FAIL_RETRY_MS 5000
+
+void retry_wifi_after_auth_fail(int wifi_status) {
+  static uint32_t seen_disconnects = 0;
+  static unsigned long failed_at = 0;
+  const DiagData &dd = diag_get();
+  if (wifi_status != ST_WIFI_CONNECTING) {
+    failed_at = 0;
+    seen_disconnects = dd.wifi_disconnects;
+    return;
+  }
+  if (dd.wifi_disconnects != seen_disconnects) {  // new failure reported by the WiFi driver
+    seen_disconnects = dd.wifi_disconnects;
+    failed_at = (dd.wifi_disc_reason == WIFI_REASON_AUTH_FAIL) ? millis() : 0;
+    return;
+  }
+  if (failed_at && (millis() - failed_at >= WIFI_AUTH_FAIL_RETRY_MS) && WiFi.status() == WL_CONNECT_FAILED) {
+    failed_at = 0;
+    log(INFO, "WiFi: AUTH_FAIL, retrying connection");
+    WiFi.disconnect();
+    WiFi.begin();  // uses the SSID/password of the last WiFi.begin()
+  }
+}
+
+void setup_ota(int wifi_status) {
+  static bool ota_configured = false;
+  if (!ENABLE_ARDUINO_OTA || ota_configured || wifi_status != ST_WIFI_CONNECTED)
+    return;
+  ArduinoOTA.setHostname(iotWebConf.getThingName());
+  ArduinoOTA.setPassword(iotWebConf.getApPasswordParameter()->valueBuffer);
+  ArduinoOTA.onStart([]() {
+    tick_enable(false);
+    log(INFO, "OTA update started");
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    log(ERROR, "OTA update failed, error %u", error);
+    tick_enable(true);
+  });
+  ArduinoOTA.begin();
+  log(INFO, "ArduinoOTA ready on port 3232");
+  ota_configured = true;
+}
+
+// Initialisiert Logging, Sensoren, Web, Funk und Töne in Reihenfolge.
 void setup() {
   setup_log(DEFAULT_LOG_LEVEL);
+  setup_diag();
+  diag_wifi_scan();  // log all visible access points with RSSI (antenna check)
+  // Remember the reason before the update libraries restart the device
+  // (web upload via /firmware as well as ArduinoOTA). Stored at the first written
+  // block, because for web uploads "total" is the partition size, not the image size.
+  Update.onProgress([](size_t done, size_t total) {
+    static bool stored = false;
+    if (!stored && done > 0) {
+      diag_set_restart_reason("Firmware-Update");
+      stored = true;
+    }
+  });
   setup_display();
   setup_switches();
   switches = read_switches();  // only read DIP switches once at boot time
   setup_thp_sensor();
   setup_webconf();
+  log_set_hostname(iotWebConf.getThingName());
+  setup_wifi_tuning(sendToBle && switches.ble_on);
   setup_speaker(playSound, ledTick && switches.led_on, speakerTick && switches.speaker_on);
   setup_transmission(VERSION_STR, iotWebConf.getThingName());
   setup_ble(ssid, sendToBle && switches.ble_on);
@@ -49,10 +166,18 @@ void setup() {
   setup_tube();
 }
 
+// Konfiguriert NTP erst nach WLAN online und warnt bei ausbleibender Sync.
 void setup_ntp(int wifi_status) {
   static bool clock_configured = false;
-  if (clock_configured)
+  if (clock_configured) {
+    // the SNTP client retries on its own; just complain every 5 min while unsynced
+    static unsigned long last_warn = 0;
+    if (!clock_is_synced() && (millis() - last_warn >= 300000UL)) {
+      last_warn = millis();
+      log(WARNING, "NTP: still no time sync - check DNS / internet access / UDP port 123");
+    }
     return;
+  }
 
   // this is called from loop() because we do not want to block in setup().
   // it might either take a while until WiFi is ready or it might even never
@@ -71,6 +196,7 @@ void setup_ntp(int wifi_status) {
   clock_configured = true;
 }
 
+// Übersetzt IotWebConf-WLAN-Zustand in Status für Anzeige/Logs.
 int update_wifi_status(void) {
   int st;
   switch (iotWebConf.getState()) {
@@ -91,6 +217,7 @@ int update_wifi_status(void) {
   return st;
 }
 
+// Bestimmt BLE-Status aus Konfiguration und Verbindung.
 int update_ble_status(void) {  // currently no error detection
   int st;
   if (sendToBle && switches.ble_on)
@@ -101,6 +228,7 @@ int update_ble_status(void) {  // currently no error detection
   return st;
 }
 
+// Zeitgesteuerte Abfrage von Temperatur/Feuchte/Druck.
 void read_THP(unsigned long current_ms,
               bool *have_thp, float *temperature, float *humidity, float *pressure, int *iaq) {
   static unsigned long last_timestamp = 0;
@@ -112,6 +240,7 @@ void read_THP(unsigned long current_ms,
   }
 }
 
+// Berechnet Zähl-/Doseraten und löst Heartbeat, MQTT, Telegram aus.
 void process_GMC(unsigned long current_ms, unsigned long current_counts, unsigned long gm_count_timestamp, unsigned long current_hv_pulses,
                  bool have_thp, float temperature, float humidity, float pressure, int iaq, int wifi_status) {
   struct GM_State {
@@ -262,6 +391,7 @@ void process_GMC(unsigned long current_ms, unsigned long current_counts, unsigne
           log(DEBUG, "Sending to MQTT");
           transmit_data_to_mqtt(tubes[TUBE_TYPE].type, tubes[TUBE_TYPE].nbr, tubes[TUBE_TYPE].cps_to_uSvph,
                                 current_cpm, (unsigned int)(accumulated_count_rate * 60), accumulated_dose_rate,
+                                dt, hv_pulses, counts,
                                 have_thp, temperature, humidity, pressure, wifi_status, false);
         }
         break;
@@ -276,6 +406,7 @@ void process_GMC(unsigned long current_ms, unsigned long current_counts, unsigne
   }
 }
 
+// Main-Loop: liest Sensoren, prüft Funk, verarbeitet Zähler und Takt.
 void loop() {
   static bool hv_error = false;  // true means a HV capacitor charging issue
 
@@ -307,6 +438,10 @@ void loop() {
   update_ble_status();
   int wifi_status = update_wifi_status();
   setup_ntp(wifi_status);
+  setup_ota(wifi_status);
+  retry_wifi_after_auth_fail(wifi_status);
+  if (ENABLE_ARDUINO_OTA)
+    ArduinoOTA.handle();
 
   read_hv(&hv_error, &hv_pulses);
   set_status(STATUS_HV, hv_error ? ST_HV_ERROR : ST_HV_OK);
@@ -330,5 +465,6 @@ void loop() {
 
   long current_loop_duration;
   current_loop_duration = millis() - current_ms;
+  diag_loop_duration(current_loop_duration);
   iotWebConf.delay((current_loop_duration < LOOP_DURATION) ? (LOOP_DURATION - current_loop_duration) : 0);
 }

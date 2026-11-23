@@ -11,7 +11,10 @@
 #define CRITICAL 4
 #define NOLOG 999  // only to set log_level, so log() never creates output
 
+// Ermöglicht levelbasierte Meldungen im printf-Stil.
 void log(int level, const char *format, ...);
+// Setzt Mindestschweregrad; niedrigere Level werden verworfen.
 void setup_log(int level);
+void log_set_hostname(const char *hostname);  // used as syslog HOSTNAME
 
 #endif // _LOG_H_

@@ -75,3 +75,27 @@
 
 // Send local alarm notifications to MQTT?
 #define SEND_LOCAL_ALARM_TO_MQTT false
+
+// ---- Diagnostics / connectivity (all optional; defaults apply if omitted) ----
+
+// Own NTP server, tried first (e.g. "fritz.box" or the router IP). Empty = public only.
+// Fallbacks pool.ntp.org and ptbtime1.ptb.de are always used if it does not answer.
+#define NTP_SERVER ""
+
+// Remote syslog (UDP), e.g. "192.168.178.10" — empty string = off.
+#define SYSLOG_SERVER ""
+#define SYSLOG_PORT 514
+
+// Disable WiFi modem sleep for more reliable reception on weak WiFi (~+80 mA).
+// Automatically ignored while BLE is active (coexistence needs modem sleep).
+#define WIFI_NO_SLEEP true
+
+// Time IotWebConf tries to (re)connect before falling back to its own AP [ms].
+#define WIFI_CONNECTION_TIMEOUT_MS 120000
+
+// Firmware update over the network (PlatformIO "espota", port 3232).
+// Password = admin password of the web configuration.
+#define ENABLE_ARDUINO_OTA true
+
+// Measurement records kept in RAM while MQTT is unreachable (48 x 150 s = 2 h).
+#define MQTT_BACKLOG_SIZE 48

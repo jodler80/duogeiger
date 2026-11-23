@@ -4,6 +4,7 @@
 #define _DISPLAY_H_
 
 void setup_display();
+// Aktualisiert Hauptanzeige: Zeit, Dosisrate und CPM.
 void display_GMC(unsigned int TimeSec, int RadNSvph, int CPM, bool use_display);
 void clear_displayline(int line);
 void display_statusline(String txt);
@@ -69,10 +70,13 @@ void display_statusline(String txt);
 #define ST_HV_OK 1
 #define ST_HV_ERROR 2
 
+// Obergrenze der unterstützten Statusindizes.
 #define STATUS_MAX 8
 
+// Setzt internen Subsystem-Status (ST_...-Werte).
 void set_status(int index, int value);
 int get_status(int index);
+// Aktualisiert Statusdarstellung auf dem OLED.
 void display_status(void);
 
 #endif // _DISPLAY_H_

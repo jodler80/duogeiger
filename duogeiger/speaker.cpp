@@ -1,3 +1,5 @@
+// Erzeugt Geiger-Töne, LED-Blinken und Melodie-/Alarmsequenzen.
+// Enthält MCPWM-Hilfen für ISR-Aufrufe ohne Flash-Cache.
 // speaker / sound related code
 // also handles the onboard LED, which lights up while speaker ticks.
 
@@ -27,6 +29,8 @@ volatile int *isr_audio_sequence = NULL;
 volatile int *isr_tick_sequence = NULL;
 volatile int *isr_sequence = NULL;  // currently played sequence
 
+// Alle Sequenzfelder nutzen Viererblöcke.
+// frequency_mHz ist Millihertz: 1000000 = 1 kHz.
 static int tick_sequence[8];
 static int alarm_sequence[12] = {
   // "high_Pitch"
@@ -59,6 +63,8 @@ static void IRAM_ATTR mcpwm_stop_direct() {
 }
 
 static void IRAM_ATTR mcpwm_set_freq_direct(uint32_t freq_hz) {
+  if (freq_hz == 0)  // guard against division by zero in ISR (tone < 1 Hz)
+    freq_hz = 1;
   MCPWM0.timer[0].timer_cfg0.timer_period           = s_timer_clk_hz / freq_hz;
   MCPWM0.timer[0].timer_cfg0.timer_period_upmethod  = 0; // immediate
 }
@@ -89,6 +95,8 @@ static void IRAM_ATTR mcpwm_force_b_low() {
   MCPWM0.operators[0].gen_force.gen_b_cntuforce_mode   = 1; // force low
 }
 
+// Timer-ISR spielt aktuelle Sequenz ab und setzt LED.
+// Verwendet nur IRAM-sichere Registerzugriffe.
 void IRAM_ATTR isr_audio() {
   // this code is periodically called by a timer hw interrupt, always same period.
   // we need to decide internally whether we actually want to do something.
@@ -181,6 +189,7 @@ void IRAM_ATTR isr_audio() {
   }
 }
 
+// Setzt für jeden Geiger-Impuls eine kurze Tick-/Tock-Sequenz.
 void IRAM_ATTR tick(bool high) {
   // high true: "tick" -> high frequency tick and LED blink
   // high false: "tock" -> lower frequency tock, no LED
@@ -210,6 +219,7 @@ void IRAM_ATTR tick(bool high) {
   portEXIT_CRITICAL_ISR(&mux_audio);
 }
 
+// Aktiviert/deaktiviert Tick- und LED-Ausgabe global.
 void tick_enable(bool enable) {
   // true -> bring ticking into the state desired by user
   // false -> disable ticking (e.g. when accessing flash)
@@ -222,6 +232,7 @@ void tick_enable(bool enable) {
   }
 }
 
+// Setzt Alarmsequenz unter Mutex; ISR spielt sie beim nächsten Tick.
 void alarm() {
   // play alarm sound, called from normal code (not ISR)
   portENTER_CRITICAL(&mux_audio);
@@ -229,6 +240,7 @@ void alarm() {
   portEXIT_CRITICAL(&mux_audio);
 }
 
+// Übergibt eine neue Audio-Sequenz an die ISR.
 void play(int *sequence) {
   // play a tone sequence, called from normal code (not ISR)
   portENTER_CRITICAL(&mux_audio);
@@ -238,6 +250,7 @@ void play(int *sequence) {
 
 #define TONE(f, v, led, t) {int(f * 0.75), v, led, int(t * 85)}
 
+// Initialisiert LED, MCPWM-Piezo, Audio-Timer und Start-Melodie.
 void setup_speaker(bool playSound, bool _led_tick, bool _speaker_tick) {
   pinMode(PIN_LED, OUTPUT);
 

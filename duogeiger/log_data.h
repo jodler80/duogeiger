@@ -12,11 +12,15 @@
 
 extern int Serial_Print_Mode;
 
+// Wählt seriellen Logmodus über USB.
 void setup_log_data(int mode);
+// Schreibt eine Messung in die konfigurierte Serielle Log-Ausgabe.
 void log_data(int GMC_counts, int time_difference, float Count_Rate, float Dose_Rate, int HV_pulse_count,
               int accumulated_GMC_counts, unsigned long accumulated_time_s, float accumulated_count_rate, float accumulated_dose_rate,
               float t, float h, float p, int iaq);
+// Protokolliert eine 1-Minuten-Messung.
 void log_data_one_minute(int time_s, int cpm, int counts);
+// Protokolliert Impulsabstände in Mikrosekunden.
 void log_data_statistics(int count_time_between);
 
 #endif // _LOG_DATA_H_

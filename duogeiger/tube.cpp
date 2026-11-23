@@ -1,3 +1,5 @@
+// Hardware-Ansteuerung des GM-Rohrs: Erzeugt die Hochspannung
+// (per FET und Kondensator) und zählt die Zähl-Impulse.
 // code related to the geiger-mueller tube hw interface
 // - high voltage generation
 // - GM pulse counting
@@ -17,10 +19,14 @@
 #define PIN_HV_CAP_FULL_INPUT 22  // !! has to be capable of "interrupt on change"
 #define PIN_GMC_COUNT_INPUT 2     // !! has to be capable of "interrupt on change"
 
+// Tote Zeit (Deadtime) in Mikrosekunden. Impulse innerhalb
+// dieser Zeit nach einer gültigen Zählung werden ignoriert.
 // Dead Time of the Geiger Counter. [usec]
 // Has to be longer than the complete pulse generated on the Pin PIN_GMC_COUNT_INPUT.
 #define GMC_DEAD_TIME 190
 
+// Tabelle der unterstützten GM-Rohr-Typen mit ihrer
+// individuellen Umrechnungsfaktor (Impulse pro Sekunde -> µSv/h).
 TUBETYPE tubes[] = {
   // use 0.0 conversion factor for unknown tubes, so it computes an "obviously-wrong" 0.0 uSv/h value rather than a confusing one.
   {"Radiation unknown", 0, 0.0},
@@ -56,6 +62,8 @@ portMUX_TYPE mux_hv = portMUX_INITIALIZER_UNLOCKED;
 #define PERIOD_DURATION_US 100
 #define PERIODS(us) ((us) / PERIOD_DURATION_US)
 
+// Interrupt-Handler, der die Hochspannungs-Elektronik steuert.
+// Steuert die Ladezyklen des FET und prüft, ob der HV-Kondensator voll ist.
 void IRAM_ATTR isr_recharge() {
   // this code is periodically called by a timer hw interrupt, always same period.
   // we need to decide internally whether we actually want to do something.
@@ -151,12 +159,16 @@ void IRAM_ATTR isr_recharge() {
   }
 }
 
+// Interrupt-Handler für das Signal, dass der
+// Hochspannungs-Kondensator voll geladen ist.
 void IRAM_ATTR isr_GMC_capacitor_full() {
   portENTER_CRITICAL_ISR(&mux_cap_full);
   isr_GMC_cap_full = 1;
   portEXIT_CRITICAL_ISR(&mux_cap_full);
 }
 
+// Liest die Status-Informationen (Fehler, Pulszahl) der
+// Hochspannungs-Elektronik thread-sicher aus.
 void read_hv(bool *hv_error, unsigned long *pulses) {
   portENTER_CRITICAL(&mux_hv);
   *pulses = isr_hv_pulses;
@@ -164,6 +176,8 @@ void read_hv(bool *hv_error, unsigned long *pulses) {
   portEXIT_CRITICAL(&mux_hv);
 }
 
+// Zählt einen Impuls des GM-Rohrs. Filtert aus, ob es
+// eine gültige Zählung ist (Deadtime-Prüfung) und aktualisiert Zähler.
 void IRAM_ATTR isr_GMC_count() {
   unsigned long now;
   static unsigned long last;
@@ -190,6 +204,8 @@ void IRAM_ATTR isr_GMC_count() {
   tick(true);  // tick
 }
 
+// Liest die gezählten Impulse und die Zeitstempel
+// aus den Interrupt-Variablen und setzt den internen Zähler auf null.
 void read_GMC(unsigned long *counts, unsigned long *timestamp, unsigned int *between) {
   portENTER_CRITICAL(&mux_GMC_count);
   *counts += isr_GMC_counts;
@@ -199,13 +215,19 @@ void read_GMC(unsigned long *counts, unsigned long *timestamp, unsigned int *bet
   portEXIT_CRITICAL(&mux_GMC_count);
 }
 
+// Initialisiert die GPIO-Pins und Interrupts für die
+// Hochspannung und die Impulserkennung des GM-Rohrs.
 void setup_tube(void) {
+  #if PIN_TEST_OUTPUT >= 0  // -1 = no test output; pinMode(-1) only produces an error message at boot
   pinMode(PIN_TEST_OUTPUT, OUTPUT);
+  #endif
   pinMode(PIN_HV_FET_OUTPUT, OUTPUT);
   pinMode(PIN_HV_CAP_FULL_INPUT, INPUT);
   pinMode(PIN_GMC_COUNT_INPUT, INPUT);
 
+  #if PIN_TEST_OUTPUT >= 0
   digitalWrite(PIN_TEST_OUTPUT, LOW);
+  #endif
   digitalWrite(PIN_HV_FET_OUTPUT, LOW);
 
   // note: we do not need to get the portMUX here as we did not yet enable interrupts.

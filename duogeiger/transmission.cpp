@@ -1,3 +1,4 @@
+// Dieses Modul realisiert HTTP-, MQTT- und Telegram-Versand über WLAN.
 // measurements data transmission related code
 // - via WiFi to internet servers
 // - via LoRa to TTN (to internet servers)
@@ -14,6 +15,7 @@
 #include "userdefines.h"
 #include "webconf.h"
 #include "tube.h"
+#include "diag.h"
 
 #include "transmission.h"
 
@@ -34,9 +36,12 @@
 // Get your own toilet URL and put it here before setting this to true.
 #define SEND2CUSTOMSRV false
 
+// Madavi nutzt präfixierte Sensornamen, um Geiger- und BME280-Daten
+// im selben JSON-Bereich zu unterscheiden.
 #define MADAVI_PREFIX_GEIGER "Radiation_"
 #define MADAVI_PREFIX_THP "BME280_"
 
+// JSON-Vorlage: %s/%d-Platzhalter werden mit snprintf gefüllt; Raw-String enthält Zeilenumbrüche.
 const char *json_format_radiation = R"=====(
 {
  "software_version": "%s",
@@ -50,6 +55,7 @@ const char *json_format_radiation = R"=====(
 }
 )=====";
 
+// JSON-Vorlage für BME280: %.2f/%.1f begrenzt Nachkommastellen.
 const char *json_format_thp = R"=====(
 {
  "software_version": "%s",
@@ -61,26 +67,8 @@ const char *json_format_thp = R"=====(
 }
 )=====";
 
-// Sent on every measurement interval
-const char *json_format_radiation_mqtt = R"=====(
-{
- "CPM": %u,
- "Dosisleistung_nSvh": %.1f,
- "Schnitt_nSvh": %.1f,
- "Zaehlungen": %u,
- "Messzeit_s": %.1f,
- "HV_Pulse": %u,
- "Strahlenstatus": "%s"
-}
-)=====";
-
-const char *json_format_thp_mqtt = R"=====(
-{
- "Temperatur_C": %.2f,
- "Luftfeuchte_pct": %.1f,
- "Luftdruck_hPa": %.1f
-}
-)=====";
+const char *json_format_thp_mqtt =
+  "{\"Temperatur_C\":%.2f,\"Luftfeuchte_pct\":%.1f,\"Luftdruck_hPa\":%.1f}";
 
 // Sent once after boot, every 24h, and on IP change
 const char *json_format_info_mqtt = R"=====(
@@ -96,6 +84,7 @@ static String http_software_version;
 static String chipID;
 static MeasurementData last_measurement = {false};
 
+// Gibt die zuletzt gespeicherte Messung inkl. CPM, Counts, Dosis und BME-Werte zurück.
 const MeasurementData& get_last_measurement() {
   return last_measurement;
 }
@@ -111,29 +100,52 @@ UniversalTelegramBot *telegram_bot;
 PubSubClient *mqtt_client;
 void mqtt_callback(char* topic, byte *payload, unsigned int length);
 
+// Prüft, ob ein MQTT-Client existiert und eine Verbindung aktiv ist.
 bool is_mqtt_connected() {
   return mqtt_client && mqtt_client->connected();
 }
 
-// Radiation status thresholds in nSv/h (1 µSv/h = 1000 nSv/h)
-const char* radiation_status_label(float dose_nsvph) {
-  if      (dose_nsvph <   1500.0f) return "Normal";
-  else if (dose_nsvph <  10000.0f) return "Erhoht";
-  else if (dose_nsvph <  80000.0f) return "Deutlich erhoht";
-  else if (dose_nsvph < 350000.0f) return "Hohe Strahlung";
-  else                             return "STRAHLUNGSALARM";
+// Liefert MQTT-Zustandscode; -99, wenn kein Client eingerichtet ist.
+int get_mqtt_state() {
+  return mqtt_client ? mqtt_client->state() : -99;
 }
 
-const char* radiation_status_color(float dose_nsvph) {
-  if      (dose_nsvph <   1500.0f) return "#2a7a2a";
-  else if (dose_nsvph <  10000.0f) return "#c8a000";
-  else if (dose_nsvph <  80000.0f) return "#c85000";
-  else if (dose_nsvph < 350000.0f) return "#b00000";
-  else                             return "#5a0000";
+// ---------------------------------------------------------------------------
+// MQTT backlog: measurement records that could not be published (WiFi/MQTT down)
+// are kept in a RAM ring buffer and re-sent to .../backlog after reconnect.
+// Record type, ring buffer and JSON formatting live in mqtt_logic.h.
+// ---------------------------------------------------------------------------
+static RingBuffer<MqttRecord, MQTT_BACKLOG_SIZE> backlog;
+
+// Liefert Anzahl noch nicht übertragener Backlog-Datensätze.
+int get_mqtt_backlog_count() {
+  return backlog.count();
 }
 
+// Protokolliert Push in Puffer und damit aktuelle Anzahl/Verluste.
+static void backlog_push(const MqttRecord &r) {
+  backlog.push(r);
+  log(INFO, "MQTT: buffered record seq=%u (%d in backlog, %u dropped)", r.seq, backlog.count(), backlog.dropped());
+}
+
+// Send up to max_records buffered records (oldest first). Stops at first failure.
+static void flush_backlog(const String &base_topic, int max_records) {
+  char payload[512];
+  String topic = base_topic + "backlog";
+  while (!backlog.empty() && max_records-- > 0) {
+    const MqttRecord &r = backlog.front();
+    format_radiation_record(payload, sizeof(payload), r, true, millis(), time(nullptr));
+    if (!mqtt_client->publish(topic.c_str(), payload))
+      return;
+    log(INFO, "MQTT: re-sent buffered record seq=%u", r.seq);
+    backlog.pop();
+  }
+}
+
+// Neuer MQTT-Reconnect erst nach 30 s, um Broker und WLAN nicht zu überlasten.
 #define MQTT_RECONNECT_ATTEMPT_INTERVAL 30000  // ms
 
+// Initialisiert HTTP-, MQTT- und Telegram-Clients und setzt Status je nach Konfiguration.
 void setup_transmission(const char *version, const char *device_name) {
   chipID = String(device_name);
 
@@ -152,6 +164,9 @@ void setup_transmission(const char *version, const char *device_name) {
   c_customsrv.hc = new HTTPClient;
 
   mqtt_client = new PubSubClient(c_mqtt);
+  mqtt_client->setBufferSize(1024);   // default 256 bytes is too small for diag/backlog payloads
+  mqtt_client->setSocketTimeout(5);   // s; default 15 s blocks loop() too long on weak WiFi
+  mqtt_client->setKeepAlive(30);      // s; broker publishes Last Will after ~45 s without contact
 
   if (strlen(mqttServer) < 5) {
     sendDataToMqttEvery = 0;
@@ -185,6 +200,7 @@ void setup_transmission(const char *version, const char *device_name) {
   set_status(STATUS_TELEGRAM, ((sendDataToMessengerEvery != 0) || sendLocalAlarmToMessenger) ? ST_TELEGRAM_INIT : ST_TELEGRAM_OFF);
 }
 
+// MQTT-Empfang: kopiert Byte-Payload in nullterminierten String und loggt ihn.
 void mqtt_callback(char* topic, byte *payload, unsigned int length) {
     char rx_buffer[length+1];
     log(INFO, "MQTT incoming msg!");
@@ -193,14 +209,14 @@ void mqtt_callback(char* topic, byte *payload, unsigned int length) {
     log(INFO, "MQTT msg on channel %s: %s", topic, rx_buffer);
 }
 
+// Baut Basis-MQTT-Topic aus Kanalpräfix und Geräte-ID auf.
 static String mqtt_base_topic() {
-  String t = mqttChannelPrefix;
-  t.trim();
-  if (t[0] == '/') t.remove(0, 1);
-  if (!t.endsWith("/")) t += '/';
-  return t + chipID + '/';
+  char buf[160];
+  build_base_topic(buf, sizeof(buf), mqttChannelPrefix, chipID.c_str());
+  return String(buf);
 }
 
+// Betrieb: MQTT-Loop, ggf. Reconnect, Info-JSON und Backlog-Abgleich.
 void poll_transmission(int wifi_status) {
   static unsigned long last_mqtt_reconnect = 0;
   static unsigned long last_info_send_ms = 0;
@@ -222,7 +238,7 @@ void poll_transmission(int wifi_status) {
                  chipID.c_str(),
                  current_ip.c_str(),
                  http_software_version.c_str(),
-                 last_measurement.tube_type);
+                 tubes[TUBE_TYPE].type);  // known at compile time — valid already at boot
         if (mqtt_client->publish((mqtt_base_topic() + "info").c_str(), info_payload, true)) {
           info_sent_on_boot = true;
           last_info_send_ms = millis();
@@ -230,19 +246,31 @@ void poll_transmission(int wifi_status) {
           log(INFO, "MQTT info sent (ip=%s)", current_ip.c_str());
         }
       }
+
+      // Re-send buffered measurements, a few per loop() so we don't block
+      if (!backlog.empty())
+        flush_backlog(mqtt_base_topic(), 4);
     } else if (wifi_status == ST_WIFI_CONNECTED) {
       if (millis() - last_mqtt_reconnect > MQTT_RECONNECT_ATTEMPT_INTERVAL) {
         log(INFO, "MQTT Reconnect");
         last_mqtt_reconnect = millis();
-        if (mqtt_client->connect(chipID.c_str(), mqttUsername, mqttPassword))
+        // Last Will: broker sets .../status = offline (retained) if we vanish
+        String status_topic = mqtt_base_topic() + "status";
+        if (mqtt_client->connect(chipID.c_str(), mqttUsername, mqttPassword,
+                                 status_topic.c_str(), 1, true, "offline")) {
+          mqtt_client->publish(status_topic.c_str(), "online", true);
+          diag_mqtt_connected();
           set_status(STATUS_MQTT, ST_MQTT_IDLE);
-        else
+        } else {
+          log(INFO, "MQTT connect failed, state=%d", mqtt_client->state());
           set_status(STATUS_MQTT, ST_MQTT_ERROR);
+        }
       }
     }
   }
 }
 
+// Wählt http/https nach URL-Schema und setzt JSON/Sensor-Header für POST.
 void prepare_http(HttpsClient *client, const char *host) {
   if (host[4] == 's')  // https
     client->hc->begin(*client->wc, host);
@@ -253,6 +281,7 @@ void prepare_http(HttpsClient *client, const char *host) {
   client->hc->addHeader("X-Sensor", chipID);
 }
 
+// Führt HTTP-POST aus, liest Antwort, beendet Transaktion und gibt Statuscode zurück.
 int send_http(HttpsClient *client, String body) {
   if (DEBUG_SERVER_SEND)
     log(DEBUG, "http request body: %s", body.c_str());
@@ -271,6 +300,7 @@ int send_http(HttpsClient *client, String body) {
   return httpResponseCode;
 }
 
+// Sendet Strahlenmesswerte als JSON; prefix unterscheidet Datenpunkte je Server.
 int send_http_geiger(HttpsClient *client, const char *host, const char *tube_type, int tube_nbr, unsigned int timediff, unsigned int hv_pulses,
                      unsigned int gm_counts, unsigned int cpm, int xpin, const char *prefix) {
   char body[1000];
@@ -287,6 +317,7 @@ int send_http_geiger(HttpsClient *client, const char *host, const char *tube_typ
   return send_http(client, body);
 }
 
+// Sendet BME280-Werte als JSON; prefix unterscheidet Datenpunkte je Server.
 int send_http_thp(HttpsClient *client, const char *host, float temperature, float humidity, float pressure, int xpin, const char *prefix) {
   char body[1000];
   prepare_http(client, host);
@@ -303,12 +334,12 @@ int send_http_thp(HttpsClient *client, const char *host, float temperature, floa
 // Send data to web servers for sensor data with predefined interval of MEASUREMENT, default 150 s / 2.5 min. No alarm handling.
 void transmit_data_to_web(const char *tube_type, int tube_nbr, unsigned int dt, unsigned int hv_pulses, unsigned int gm_counts, unsigned int cpm,
                    int have_thp, float temperature, float humidity, float pressure, int wifi_status) {
+  // Rechnet CPM in nSv/h: CPM/60 = CPS, multipliziert mit tube cps_to_uSvph und 1000.
   float dose_nsvph = (dt > 0) ? ((float)cpm / 60.0f) * tubes[TUBE_TYPE].cps_to_uSvph * 1000.0f : 0.0f;
   last_measurement = {true, cpm, gm_counts, hv_pulses, dt, dose_nsvph,
                       (bool)have_thp, temperature, humidity, pressure};
-  strncpy(last_measurement.tube_type, tube_type ? tube_type : "", sizeof(last_measurement.tube_type) - 1);
-  strncpy(last_measurement.version, http_software_version.c_str(), sizeof(last_measurement.version) - 1);
 
+  // Ohne WLAN keine Web-POSTs; die zuletzt gespeicherte Messung bleibt erhalten.
   if (wifi_status != ST_WIFI_CONNECTED)
     return;
 
@@ -339,10 +370,14 @@ void transmit_data_to_web(const char *tube_type, int tube_nbr, unsigned int dt, 
     bool scomm_ok;
     log(INFO, "Sending to sensor.community ...");
     set_status(STATUS_SCOMM, ST_SCOMM_SENDING);
+    unsigned long http_start = millis();
+    // sensor.community-Erfolg wird im Code mit HTTP 201 geprüft; X-PIN markiert Sensorart.
     rc1 = send_http_geiger(&c_sensorc, SENSORCOMMUNITY, tube_type, tube_nbr, dt, hv_pulses, gm_counts, cpm, XPIN_RADIATION, "");
     rc2 = have_thp ? send_http_thp(&c_sensorc, SENSORCOMMUNITY, temperature, humidity, pressure, XPIN_BME280, "") : 201;
+    unsigned long http_duration = millis() - http_start;
     delay(300);
     scomm_ok = (rc1 == 201) && (rc2 == 201);
+    diag_http_result(scomm_ok, http_duration);
     log(INFO, "Sent to sensor.community, status: %s, http: %d %d", scomm_ok ? "ok" : "error", rc1, rc2);
     set_status(STATUS_SCOMM, scomm_ok ? ST_SCOMM_IDLE : ST_SCOMM_ERROR);
   }
@@ -369,12 +404,14 @@ void transmit_data_to_telegram(const char *tube_type, int tube_nbr, float tube_f
   bool telegram_ok;
   char message[200];
 
+  // BME-Text für Telegram; Druck wird als Pa/100 in hPa ausgegeben.
   if (have_thp) {
     sprintf(thp_text, "\nBME data: %.1fC %.1f%% %.1fhPa", temperature, humidity, pressure/100);
   }
 
   log(INFO, "Sending to Telegram messenger ...");
   set_status(STATUS_TELEGRAM, ST_TELEGRAM_SENDING);
+  // Alarmtext: mit tube_nbr>0 nSv/h, sonst CPM; HTML-Tags für Telegram.
   if (alarm_status) {
     if (tube_nbr > 0)
       sprintf(message, "<b>--- MULTIGEIGER ALERT ! ---</b>\n%s\n<code>%s</code> rate too high:\n%.2f nSv/h (accumulated: %.2f nSv/h)", localDeviceName, chipID.c_str(), cpm*tube_factor*1000/60, accu_rate*1000);
@@ -392,11 +429,10 @@ void transmit_data_to_telegram(const char *tube_type, int tube_nbr, float tube_f
 }
 
 // Send data to user with interval configurable via Web Config, incl. alarm handling.
+// If WiFi/MQTT is down, the record is buffered and re-sent later to .../backlog.
 void transmit_data_to_mqtt(const char *tube_type, int tube_nbr, float tube_factor, unsigned int cpm, unsigned int accu_cpm, float accu_rate,
+                   unsigned int dt, unsigned int hv_pulses, unsigned int gm_counts,
                    int have_thp, float temperature, float humidity, float pressure, int wifi_status, bool alarm_status) {
-
-  if (wifi_status != ST_WIFI_CONNECTED)
-    return;
 
   if (get_status(STATUS_MQTT) == ST_MQTT_OFF)
     return;
@@ -408,8 +444,28 @@ void transmit_data_to_mqtt(const char *tube_type, int tube_nbr, float tube_facto
     return;
   }
 
-  if (!mqtt_client->connected())
+  MqttRecord r;
+  // Laufende Nummer jeder Messung; Lücken in "seq" zeigen verlorene Messungen.
+  r.seq = diag_next_seq();
+  r.ms = millis();
+  // Unix-Zeit nur bei gültiger Uhr sonst 0; Backlog nutzt lokale millis zusätzlich.
+  r.ts = clock_is_valid(time(nullptr)) ? time(nullptr) : 0;
+  r.cpm = cpm;
+  r.counts = gm_counts;
+  r.hv_pulses = hv_pulses;
+  // Dosis nSv/h aus CPM/60 * tube_factor * 1000; accu_rate wird auf nSv/h skaliert.
+  r.dose_nsvph = cpm * tube_factor * 1000.0f / 60.0f;
+  r.accu_nsvph = accu_rate * 1000.0f;
+  r.sample_s = dt / 1000.0f;   // all values refer to the same MQTT interval as cpm
+  r.have_thp = have_thp;
+  r.temperature = temperature;
+  r.humidity = humidity;
+  r.pressure_hpa = pressure / 100.0f;  // sensor delivers Pa
+
+  if ((wifi_status != ST_WIFI_CONNECTED) || !mqtt_client->connected()) {
+    backlog_push(r);
     return;
+  }
 
   String mqtt_topic = mqtt_base_topic();
   char mqtt_payload[1000];
@@ -417,24 +473,25 @@ void transmit_data_to_mqtt(const char *tube_type, int tube_nbr, float tube_facto
 
   log(INFO, "Sending to MQTT server on %s", mqtt_topic.c_str());
   set_status(STATUS_MQTT, ST_MQTT_SENDING);
-  float dose_nsvph = cpm * tube_factor * 1000.0f / 60.0f;
-  snprintf(mqtt_payload, 1000, json_format_radiation_mqtt,
-           cpm,
-           dose_nsvph,
-           accu_rate * 1000.0f,
-           last_measurement.counts,
-           last_measurement.sample_ms / 1000.0f,
-           last_measurement.hv_pulses,
-           radiation_status_label(dose_nsvph));
+  format_radiation_record(mqtt_payload, sizeof(mqtt_payload), r, false, millis(), time(nullptr));
   mqtt_ok = mqtt_client->publish(String(mqtt_topic + "radiation").c_str(), mqtt_payload);
-
-  if (mqtt_ok && have_thp) {
-    snprintf(mqtt_payload, 1000, json_format_thp_mqtt,
-            temperature,
-            humidity,
-            pressure);
+  if (!mqtt_ok) {
+    backlog_push(r);
+  } else if (have_thp) {
+    snprintf(mqtt_payload, sizeof(mqtt_payload), json_format_thp_mqtt,
+             r.temperature, r.humidity, r.pressure_hpa);
     mqtt_ok = mqtt_client->publish(String(mqtt_topic + "environmental").c_str(), mqtt_payload);
   }
+
+  // Diagnostics, same cadence as the measurements
+  diag_json(mqtt_payload, sizeof(mqtt_payload), mqtt_client->state());
+  size_t n = strlen(mqtt_payload);
+  if (n > 0 && n + 40 < sizeof(mqtt_payload)) {  // append backlog info: replace closing '}'
+    snprintf(mqtt_payload + n - 1, sizeof(mqtt_payload) - n + 1,
+             ",\"backlog\":%d,\"backlog_dropped\":%u}", backlog.count(), backlog.dropped());
+  }
+  if (mqtt_client->publish(String(mqtt_topic + "diag").c_str(), mqtt_payload))
+    diag_reset_loop_max();
 
   log(INFO, "Sent to MQTT broker, status: %s", mqtt_ok ? "ok" : "error");
   set_status(STATUS_MQTT, mqtt_ok ? ST_MQTT_IDLE : ST_MQTT_ERROR);

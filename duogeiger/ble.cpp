@@ -1,3 +1,5 @@
+// Überträgt Messdaten via Bluetooth Low Energy (BLE).
+// Nutzt das Herzfrequenz-Protokoll als Standard-Tunnel für Zählraten.
 // Code related to the transmission of the measured data via Bluetooth Low Energy,
 // uses GATT Heart Rate Measurement Service for notifications with CPM update.
 //
@@ -35,16 +37,22 @@ static NimBLEServer *bleServer;
 static bool ble_enabled = false;
 static bool device_connected = false;
 
+// BLE-Wortfeld für die Herzfrequenz-Messung.
+// Bit 0 aktiviert 16-bit CPM, Bit 3 reserviert Platz für Paket-Counter.
 uint8_t flags_HRS = 0b00001001; // bit 0 --> 1 = HR (cpm) as UINT16, bit 3 --> add UINT16 Energy Expended (rolling update counter)
 uint8_t txBuffer_HRM[5]; // transmit buffer, byte[0] = flags, [1, 2] = cpm, [3, 4] = rolling update counter
 uint8_t txBuffer_HRPOS[1] = {TUBE_TYPE};
 unsigned int status_HRCP = 0;
 unsigned int cpm_update_counter = 0;
 
+// Prüft, ob BLE aktiviert ist und aktuell eine Verbindung
+// zu einem anderen Gerät (z. B. Handy) besteht.
 bool is_ble_connected(void) {
   return ble_enabled && device_connected;
 }
 
+// Rückmeldungen (Callbacks) für Verbindungs- und
+// Trennungsereignisse, protokolliert und setzt Status-Flags.
 class MyServerCallbacks: public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *pServer, ble_gap_conn_desc *desc) {
     log(INFO, "BLE device connected, remote MAC: %s", NimBLEAddress(desc->peer_ota_addr).toString().c_str());
@@ -58,6 +66,8 @@ class MyServerCallbacks: public NimBLEServerCallbacks {
 };
 
 // Callback allowing for Control Point Characteristic to reset "energy expenditure" (packet counter)
+// Empfängt Schreibzugriffe auf das 'Control Point'-Feld.
+// Dient dazu, den internen Paket-Counter manuell zurückzusetzen.
 class MyCharacteristicCallbacks: public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *pCharacteristic) {
     String rxValue = pCharacteristic->getValue().c_str();
@@ -65,6 +75,8 @@ class MyCharacteristicCallbacks: public NimBLECharacteristicCallbacks {
   }
 };
 
+// Bereitet die BLE-Datenpakete (CPM, Umwelt, IAQ) vor
+// und sendet sie an alle verbundenen Bluetooth-Geräte.
 void update_bledata(unsigned int cpm, float temperature, float humidity, float pressure, int iaq) {
   if (!ble_enabled)
     return;
@@ -119,6 +131,8 @@ void update_bledata(unsigned int cpm, float temperature, float humidity, float p
 
 }
 
+// Richtet den BLE-Server ein, definiert die Dienste
+// und startet die Werbung (Advertising) für die Kopplung.
 void setup_ble(char *device_name, bool ble_on) {
   if (!ble_on) {
     set_status(STATUS_BLE, ST_BLE_OFF);
@@ -183,6 +197,8 @@ void setup_ble(char *device_name, bool ble_on) {
   log(INFO, "BLE service advertising started, device name: %s, MAC: %s", device_name, BLEDevice::getAddress().toString().c_str());
 }
 
+// Markiert BLE als ausgeschaltet (Flag und Statusanzeige);
+// Server und Werbung (Advertising) werden dabei nicht beendet.
 void disable_ble(void) {
   ble_enabled = false;
   set_status(STATUS_BLE, ST_BLE_OFF);

@@ -12,7 +12,9 @@ typedef struct switches {
 } Switches;
 
 
+// Konfiguriert GPIOs für DIP-Schalter.
 void setup_switches();
+// Liest Schalterbits SW0..SW3 als struct.
 Switches read_switches(void);
 
 #endif // _SWITCHES_H_

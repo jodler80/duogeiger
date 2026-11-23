@@ -1,3 +1,4 @@
+// Initialisiert und liest optionalen BME280 über I2C; ohne Sensor liefert er Nullwerte.
 // temperature, humidity, pressure sensor (BME280) related code
 // BME680 with BSEC/IAQ removed for simplicity; iaq is always 0.
 
@@ -9,9 +10,11 @@
 #include "log.h"
 #include "thp_sensor.h"
 
+// Sensor-Typ: 0 = keiner gefunden, 280 = BME280 erkannt.
 static int type_thp = 0;
 static Adafruit_BME280 bme280;
 
+// Sucht BME280 auf I2C-Adressen 0x76/0x77.
 bool setup_thp_sensor(void) {
   if (bme280.begin(0x76) || bme280.begin(0x77))
     type_thp = 280;
@@ -23,10 +26,12 @@ bool setup_thp_sensor(void) {
   return (type_thp > 0);
 }
 
+// Name des erkannten Sensors für Diagnose/Oberfläche.
 const char *get_thp_name(void) {
   return (type_thp == 280) ? "BME280" : "none";
 }
 
+// Liest BME280-Werte und liefert Erfolg; ohne Sensor Nullwerte und false.
 bool read_thp_sensor(float *temperature, float *humidity, float *pressure, int *iaq) {
   *iaq = 0;
   if (type_thp != 280) {

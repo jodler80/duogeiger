@@ -1,3 +1,4 @@
+// Ausgabe von Messwertzeilen und Tabellen als formatierte Logmeldungen.
 // measurement data logging
 
 #include "version.h"
@@ -9,11 +10,13 @@ int Serial_Print_Mode;
 static const char *Serial_Logging_Name = "Simple Multi-Geiger";
 static const char *dashes = "-----------------------------------------------------------------------------------------------------------------------------";
 
+// Spaltenbreiten der Log-Tabelle; Einheiten werden separat als Header ausgegeben.
 static const char *Serial_Logging_Header = "     %10s %15s %10s %9s %9s %8s %9s %9s %9s %5s %5s %6s %4s";
 static const char *Serial_Logging_Body = "DATA %10d %15d %10f %9f %9d %8d %9lu %9f %9f %5.1f %5.1f %6.0f %4d";
 static const char *Serial_One_Minute_Log_Header = "     %4s %10s %29s";
 static const char *Serial_One_Minute_Log_Body = "DATA %4d %10d %29d";
 
+// Serial_Print_Mode steuert, welche Tabellenzeilen später ausgegeben werden.
 void setup_log_data(int mode) {
   Serial_Print_Mode = mode;
 
@@ -26,6 +29,7 @@ void setup_log_data(int mode) {
   }
 }
 
+// Gibt Messwertzeile mit Zählimpulsen, Rate, Dosis und Umgebungswerten aus.
 void log_data(int GMC_counts, int time_difference, float Count_Rate, float Dose_Rate, int HV_pulse_count,
               int accumulated_GMC_counts, unsigned long accumulated_time_s, float accumulated_count_rate, float accumulated_dose_rate,
               float t, float h, float p, int iaq) {
@@ -43,6 +47,7 @@ void log_data(int GMC_counts, int time_difference, float Count_Rate, float Dose_
       t, h, p, iaq);
 }
 
+// Protokolliert ein Minutenmessergebnis mit Zeit, CPM und Zählrate.
 void log_data_one_minute(int time_s, int cpm, int counts) {
   static int counter = 0;
   if (counter++ % 20 == 0) {  // output the header now and then, so table is better readable
@@ -56,6 +61,7 @@ void log_data_one_minute(int time_s, int cpm, int counts) {
       time_s, cpm, counts);
 }
 
+// Protokolliert Rohintervalle zwischen zwei Geiger-Impulsen.
 void log_data_statistics(int count_time_between) {
   static int counter = 0;
   if (counter++ % 20 == 0) {  // output the header now and then, so table is better readable

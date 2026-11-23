@@ -1,3 +1,4 @@
+// Liest DIP-Schalter-Pins als globale Funktionsschalter.
 // DIP switch related code
 
 #include <Arduino.h>
@@ -8,6 +9,7 @@
 // Inputs for the switches
 static unsigned int PIN_SWI_0, PIN_SWI_1, PIN_SWI_2, PIN_SWI_3;
 
+// Konfiguriert DIP-Schalter-Pins und zeigt Anfangszustand.
 void setup_switches() {
   PIN_SWI_0 = 39;
   PIN_SWI_1 = 38;
@@ -23,6 +25,7 @@ void setup_switches() {
       s.speaker_on, s.display_on, s.led_on, s.ble_on);
 }
 
+// Übersetzt vier Eingänge in booleanische Funktionsflags.
 Switches read_switches() {
   Switches s;
 

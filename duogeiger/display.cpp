@@ -1,3 +1,5 @@
+// Ansteuerung des OLED-Displays: Zeigt Startbild, Statussymbole
+// und aktuelle Messwerte (Dosisrate, CPM, Zeit) an.
 // OLED display related code
 
 #include <Arduino.h>
@@ -21,6 +23,8 @@ U8X8 *pu8x8;
 bool displayIsClear;
 // static bool isLoraBoard;
 
+// Zeigt das feste Startbild mit Projektname, Info-Webadresse
+// und Firmware-Version auf dem OLED an.
 void display_start_screen(void) {
   char line[20];
 
@@ -37,18 +41,24 @@ void display_start_screen(void) {
   displayIsClear = false;
 };
 
+// Initialisiert die I2C-Schnittstelle des OLED-Displays
+// und zeigt direkt das Startbild.
 void setup_display() {
   pu8x8 = &u8x8;
   pu8x8->begin();
   display_start_screen();
 }
 
+// Löscht eine Textzeile, indem sie mit 16 Leerzeichen
+// übermalt wird (16 Zeichen = volle Displaybreite).
 void clear_displayline(int line) {
   const char *blanks;
   blanks = "                ";  // 16
   pu8x8->drawString(0, line, blanks);
 }
 
+// Aktualisiert die Statuszeile (letzte Zeile) mit dem
+// übergebenen Text, nach vorherigem Löschen.
 void display_statusline(String txt) {
   if (txt.length() == 0)
     return;
@@ -58,10 +68,14 @@ void display_statusline(String txt) {
   pu8x8->drawString(0, line, txt.c_str());
 }
 
+// Speichert den aktuellen Zustand (z. B. verbunden, Fehler)
+// für jedes Systemmodul (WLAN, Bluetooth, Server).
 static int status[STATUS_MAX] = {ST_NODISPLAY, ST_NODISPLAY, ST_NODISPLAY, ST_NODISPLAY,
                                  ST_NODISPLAY, ST_NODISPLAY, ST_NODISPLAY, ST_NODISPLAY
                                 };  // current status of misc. subsystems
 
+// Zeichen-Tabelle für die Statusanzeige. Jede Zeile repräsentiert
+// z. B. WLAN oder Bluetooth. Jeder Buchstabe ist ein Zustand.
 static const char *status_chars[STATUS_MAX] = {
   // group WiFi and transmission to internet servers
   ".W0wA",  // ST_WIFI_OFF, ST_WIFI_CONNECTED, ST_WIFI_ERROR, ST_WIFI_CONNECTING, ST_WIFI_AP
@@ -78,6 +92,8 @@ static const char *status_chars[STATUS_MAX] = {
   ".H7",    // ST_NODISPLAY, ST_HV_OK, ST_HV_ERROR
 };
 
+// Setzt den Status eines Moduls und aktualisiert sofort
+// die Anzeige auf dem OLED, wenn sich etwas geändert hat.
 void set_status(int index, int value) {
   if ((index >= 0) && (index < STATUS_MAX)) {
     if (status[index] != value) {
@@ -88,10 +104,14 @@ void set_status(int index, int value) {
     log(ERROR, "invalid parameters: set_status(%d, %d)", index, value);
 }
 
+// Liefert den numerischen Status-Wert eines Moduls zurück,
+// um von außen prüfen zu können, ob z. B. WLAN aktiv ist.
 int get_status(int index) {
   return status[index];
 }
 
+// Wandelt den numerischen Status in ein Anzeigen-Zeichen um
+// (entsprechend der Tabelle in status_chars).
 char get_status_char(int index) {
   if ((index >= 0) && (index < STATUS_MAX)) {
     int idx = status[index];
@@ -104,6 +124,8 @@ char get_status_char(int index) {
   return '?';  // some error happened
 }
 
+// Baut den Status-Text aus den Zuständen der einzelnen Module
+// und schreibt ihn in die Statuszeile des Displays.
 void display_status(void) {
   char output[17];  // max. 16 chars wide display + \0 terminator
   // const char *format = isLoraBoard ? "%c%c%c%c%c%c%c%c" : "%c %c %c %c %c %c %c %c";  // 8 or 16 chars wide
@@ -115,6 +137,8 @@ void display_status(void) {
   display_statusline(output);
 }
 
+// Formatiert eine Zeiteinheit in Sekunden in eine kurze, lesbare
+// Darstellung (z. B. 30s, 5m, 2h, 3d) für das Display.
 char *format_time(unsigned int secs) {
   static char result[4];
   unsigned int mins = secs / 60;
@@ -133,6 +157,8 @@ char *format_time(unsigned int secs) {
   return result;
 }
 
+// Zeigt die Hauptmesswerte an: Dosisrate (nSv/h),
+// Zählrate (CPM) und die gemessene Zeit, bzw. löscht das Display.
 void display_GMC(unsigned int TimeSec, int RadNSvph, int CPM, bool use_display) {
   if (!use_display) {
     if (!displayIsClear) {
